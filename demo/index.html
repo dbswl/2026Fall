@@ -1,0 +1,505 @@
+<title>한 줄 진단</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Nanum+Pen+Script&display=swap">
+<style>
+/* 레이아웃: 상단 요약 + 탭 3개(반 브리핑 / 학생별 오답노트 / 원인 확인). 학생 풀이는 줄 노트 위 손글씨, 틀린 줄에만 빨간 펜 표시 */
+:root{
+  --bg:#f4f6f9; --surface:#ffffff; --ink:#18212d; --muted:#5b6778; --line:#dde2ea; --soft:#eef1f6;
+  --accent:#2a4a86; --accent-ink:#ffffff; --wrong:#c0392b; --wrong-soft:#fbe9e6; --ok:#2f7d57;
+  --paper:#fbfaf6; --rule:#d9e2ef; --pen:#24324a;
+  --cC:#2a4a86; --cK:#b8741a; --cR:#7b4aa6; --cS:#1f8a7a;
+  --font:"Noto Sans KR",system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --hand:"Nanum Pen Script","Noto Sans KR",cursive;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12171f; --surface:#1a212c; --ink:#e7ecf3; --muted:#9aa6b8; --line:#2c3644; --soft:#222b38;
+  --accent:#7ea3e8; --accent-ink:#0f1620; --wrong:#ee7a6b; --wrong-soft:#3a2321; --ok:#6cc79a;
+  --paper:#1e2633; --rule:#2e3a4c; --pen:#dfe6f1;
+  --cC:#7ea3e8; --cK:#e0a24c; --cR:#bd93e0; --cS:#55c4b2; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12171f; --surface:#1a212c; --ink:#e7ecf3; --muted:#9aa6b8; --line:#2c3644; --soft:#222b38;
+  --accent:#7ea3e8; --accent-ink:#0f1620; --wrong:#ee7a6b; --wrong-soft:#3a2321; --ok:#6cc79a;
+  --paper:#1e2633; --rule:#2e3a4c; --pen:#dfe6f1;
+  --cC:#7ea3e8; --cK:#e0a24c; --cR:#bd93e0; --cS:#55c4b2; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1{font-size:1.5rem;line-height:1.3;margin:0;text-wrap:balance}
+h2{font-size:1.05rem;margin:0 0 4px;text-wrap:balance}
+h3{font-size:.95rem;margin:0}
+p{margin:0}
+.muted{color:var(--muted)} .small{font-size:.85rem}
+.num{font-variant-numeric:tabular-nums}
+i{font-family:Georgia,"Times New Roman",serif}
+header{display:flex;flex-direction:column;gap:10px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:99px;background:var(--soft);color:var(--muted);font-size:.8rem;border:1px solid var(--line)}
+.pill.demo{color:var(--wrong);border-color:var(--wrong);background:var(--wrong-soft)}
+.flow{display:flex;flex-wrap:wrap;gap:6px 10px;font-size:.82rem;color:var(--muted);align-items:center}
+.flow span.step{padding:2px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.flow span.step.key{border-color:var(--wrong);color:var(--wrong);font-weight:700}
+.flow span.arrow{opacity:.6}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{font:inherit;background:none;border:0;border-bottom:3px solid transparent;padding:10px 14px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent);font-weight:700}
+button:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.panel{display:flex;flex-direction:column;gap:20px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.kpi{background:var(--soft);border-radius:8px;padding:10px 12px}
+.kpi b{display:block;font-size:1.4rem;line-height:1.3}
+.kpi span{font-size:.8rem;color:var(--muted)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}
+ol.order{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:12px;counter-reset:o}
+ol.order li{display:grid;grid-template-columns:28px 1fr;gap:10px;counter-increment:o}
+ol.order li::before{content:counter(o);width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:700;font-size:.85rem}
+.tag{display:inline-block;padding:0 8px;border-radius:4px;font-size:.78rem;font-weight:700;color:#fff;white-space:nowrap}
+.tag.C{background:var(--cC)} .tag.K{background:var(--cK)} .tag.R{background:var(--cR)} .tag.S{background:var(--cS)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .tag{color:#10151c}}
+:root[data-theme="dark"] .tag{color:#10151c}
+.stack{display:flex;height:26px;border-radius:5px;overflow:hidden;background:var(--soft)}
+.stack>div{display:grid;place-items:center;color:#fff;font-size:.75rem;font-weight:700;min-width:0}
+.stack>div.C,.track>div.C{background:var(--cC)} .stack>div.K,.track>div.K{background:var(--cK)} .stack>div.R,.track>div.R{background:var(--cR)} .stack>div.S,.track>div.S{background:var(--cS)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .stack>div{color:#10151c}}
+:root[data-theme="dark"] .stack>div{color:#10151c}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.85rem}
+.qrow{display:grid;grid-template-columns:minmax(120px,210px) 1fr 96px;gap:10px;align-items:center;font-size:.85rem}
+.qrow>.num{white-space:nowrap}.qrow .lbl{min-width:0;line-height:1.3}
+.track{height:20px;border-radius:3px;background-image:linear-gradient(to right,var(--line) 1px,transparent 1px);background-size:25% 100%;background-color:var(--soft);display:flex;overflow:hidden;border-right:1px solid var(--line)}
+.track>div{height:100%}
+.axis{display:grid;grid-template-columns:minmax(120px,210px) 1fr 96px;gap:10px;font-size:.72rem;color:var(--muted)}
+.axis div.ticks{display:flex;justify-content:space-between}
+.watch{display:flex;flex-direction:column;gap:10px}
+.watch .row{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;padding:10px 12px;border-radius:8px;background:var(--soft)}
+.btn{font:inherit;font-size:.88rem;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);border-radius:6px;padding:6px 12px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.notice{background:var(--wrong-soft);border:1px solid var(--wrong);border-radius:8px;padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;font-size:.9rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:.88rem;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;border-radius:99px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:.78rem;color:var(--muted);font-weight:500;white-space:nowrap}
+.grid th,.grid td{text-align:center;padding:4px 4px;white-space:nowrap}
+.grid th:first-child,.grid td:first-child{text-align:left}
+.cell{font:inherit;font-size:.78rem;width:28px;height:28px;border-radius:5px;border:1px solid var(--wrong);background:var(--wrong-soft);color:var(--wrong);cursor:pointer;font-weight:700;padding:0}
+.cell.ok{display:inline-grid;place-items:center;border-color:var(--line);background:transparent;color:var(--muted);cursor:default;font-weight:400}
+.rec{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:12px 18px;align-items:start;padding:14px;border:1px solid var(--line);border-radius:8px}
+.rec.flash{outline:2px solid var(--accent)}
+.rec .ctl{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.item{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px 20px;padding:14px;border:1px solid var(--line);border-radius:8px}
+.item .side{display:flex;flex-direction:column;gap:8px;min-width:0}
+select{font:inherit;font-size:.88rem;padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.done{color:var(--ok);font-weight:700;font-size:.85rem}
+.low{color:var(--wrong);font-weight:700}
+details summary{cursor:pointer;color:var(--accent)}
+.note{background:var(--soft);border-radius:8px;padding:12px 14px}
+.prob{font-size:.88rem}
+.ans{font-size:.85rem;display:flex;flex-wrap:wrap;gap:4px 14px}
+.ans .w{color:var(--wrong);font-weight:700}
+
+/* 학생 풀이: 줄 노트 위 손글씨 */
+.paper{background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:6px 12px 8px;
+  background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 33px,var(--rule) 33px,var(--rule) 34px);
+  background-position:0 6px;font-family:var(--hand);font-size:1.45rem;line-height:34px;color:var(--pen);min-width:0;overflow-x:auto}
+.paper .wl{white-space:nowrap;display:flex;align-items:baseline;gap:10px}
+.paper .wl.err>span.t{text-decoration:underline wavy var(--wrong);text-decoration-thickness:1.5px;text-underline-offset:5px}
+.paper .errmark{font-family:var(--font);font-size:.72rem;font-weight:700;color:var(--wrong);line-height:1.2;white-space:nowrap}
+.paper .wl.stop{font-family:var(--font);font-size:.8rem;color:var(--muted)}
+.paper.empty{font-family:var(--font);font-size:.85rem;color:var(--muted);line-height:34px}
+.paper.sm{font-size:1.25rem;line-height:30px;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent 29px,var(--rule) 29px,var(--rule) 30px)}
+
+/* 같은 문항, 다른 원인 */
+.versus{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.8fr);gap:16px}
+.versus .old{background:var(--soft);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.versus .old .big{font-size:1.1rem;font-weight:700}
+.versus .new{display:flex;flex-direction:column;gap:10px;min-width:0}
+.grp{display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;align-items:start;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.grp:last-child{border-bottom:0;padding-bottom:0}
+.grp .who{display:flex;flex-direction:column;gap:6px;min-width:0}
+.mini{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;font-size:.85rem}
+.mini .h{font-family:var(--hand);font-size:1.3rem;color:var(--pen);text-decoration:underline wavy var(--wrong);text-decoration-thickness:1.5px;text-underline-offset:4px}
+.mini .h.none{font-family:var(--font);font-size:.85rem;color:var(--muted);text-decoration:none}
+.rx{font-size:.84rem}
+
+@media (max-width:720px){
+  .versus{grid-template-columns:1fr}
+  .item{grid-template-columns:1fr}
+}
+@media (max-width:620px){
+  .rec{grid-template-columns:1fr}
+  .qrow,.axis{grid-template-columns:96px 1fr 84px;gap:6px}
+  .grp{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:no-preference){.rec{transition:outline-color .3s}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="meta"><span class="pill demo">가상 데이터</span><span class="pill" id="examPill"></span><span class="pill">학생 이름은 A~H로 표시</span></div>
+    <h1>한 줄 진단</h1>
+    <p style="font-weight:500">내일 수업 준비, 풀이 한 줄로 마칩니다.</p>
+    <p class="muted">채점한 숙제, 수업 중에 푼 문제, 시험지를 사진으로 올리면 학생이 쓴 풀이 과정을 읽어 어느 줄에서 왜 틀렸는지 찾고, 수업 전에 반 전체가 막힌 곳과 설명 순서, 학생마다 오답 처방전을 보여 줍니다.</p>
+    <div class="flow" aria-label="처리 순서">
+      <span class="step">채점한 숙제·문제지 사진</span><span class="arrow">→</span>
+      <span class="step key">풀이 과정 읽기</span><span class="arrow">→</span>
+      <span class="step key">틀린 줄 찾기</span><span class="arrow">→</span>
+      <span class="step">원인 진단</span><span class="arrow">→</span>
+      <span class="step">선생님 확인</span><span class="arrow">→</span>
+      <span class="step">진찰 기록 · 오답 처방전</span>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs">
+    <button role="tab" id="t-brief" aria-selected="true" aria-controls="p-brief">진찰 기록</button>
+    <button role="tab" id="t-stu" aria-selected="false" aria-controls="p-stu">오답 처방전</button>
+    <button role="tab" id="t-chk" aria-selected="false" aria-controls="p-chk">진단서 확인</button>
+  </div>
+
+  <section class="panel" id="p-brief" role="tabpanel" aria-labelledby="t-brief"></section>
+  <section class="panel" id="p-stu" role="tabpanel" aria-labelledby="t-stu" hidden></section>
+  <section class="panel" id="p-chk" role="tabpanel" aria-labelledby="t-chk" hidden></section>
+</div>
+
+<script>
+const L3=["(x − 1) + x + (x + 1) = 57","3x = 57","x = 19","답 19"];
+const DATA = {
+  exam: { title: "중1-1 총정리 숙제", cls: "중1 A반", perQ: 16 },
+  students: ["A","B","C","D","E","F","G","H"],
+  units: {1:"자연수의 성질",2:"정수와 유리수",3:"정수와 유리수의 계산",4:"문자와 식",5:"일차방정식",6:"일차방정식의 활용",7:"좌표평면과 그래프",8:"정비례와 반비례"},
+  causes: {
+    C: { name: "개념 부족", short: "개념", tip: "정의나 규칙을 한 문장으로 다시 쓰게 하고, 같은 개념의 쉬운 문제부터 다시 풀기." },
+    K: { name: "계산 실수", short: "계산", tip: "풀이를 줄 바꿔 쓰고 음수에는 괄호. 끝나면 답을 처음 식에 넣어 검산하기." },
+    R: { name: "문제 오독", short: "오독", tip: "구하는 것에 밑줄을 긋고, 답을 쓰기 전에 물음을 한 번 더 읽기." },
+    S: { name: "풀이 전략 오류", short: "전략", tip: "①구할 것 ②쓸 식 ③계산 순서를 적는 풀이 카드를 따라 쓰며 식 세우기부터 연습." }
+  },
+  questions: [
+    { id:1, unit:1, topic:"소인수분해", text:"180을 소인수분해하시오.", ans:"2² × 3² × 5",
+      sim:{ text:"252를 소인수분해하시오.", ans:"2² × 3² × 7" },
+      hint:"소인수는 소수여야 함. 몫이 소수가 될 때까지 나누고, 마지막 줄에 옮겨 쓸 때 지수를 하나씩 대조." },
+    { id:2, unit:1, topic:"최대공약수 활용", text:"사과 48개와 귤 72개를 최대한 많은 학생에게 똑같이 나누어 주려고 한다. 몇 명에게 나누어 줄 수 있는가?", ans:"24명",
+      sim:{ text:"연필 36자루와 지우개 60개를 최대한 많은 학생에게 똑같이 나누어 주려고 한다. 몇 명에게 나누어 줄 수 있는가?", ans:"12명" },
+      hint:"'최대한 많이 똑같이 나눔'은 최대공약수, '처음으로 다시 같아짐'은 최소공배수. 문장 유형을 표로 정리." },
+    { id:3, unit:2, topic:"수의 대소", text:"다음 수를 작은 것부터 차례로 나열하시오. −3, 2, −1/2, 0, −5/2", ans:"−3, −5/2, −1/2, 0, 2",
+      sim:{ text:"다음 수를 작은 것부터 차례로 나열하시오. −2, 1, −3/4, 0, −7/2", ans:"−7/2, −2, −3/4, 0, 1" },
+      hint:"음수는 절댓값이 클수록 작다. 수직선에 직접 찍어 보게 하기." },
+    { id:4, unit:2, topic:"절댓값", text:"절댓값이 3 이하인 정수의 개수를 구하시오.", ans:"7개",
+      sim:{ text:"절댓값이 2 이하인 정수의 개수를 구하시오.", ans:"5개" },
+      hint:"−3부터 3까지 수직선에 표시. 0 포함, '이하'와 '미만' 구분." },
+    { id:5, unit:3, topic:"정수의 덧셈과 뺄셈", text:"(−3) − (−7) + (−2) 를 계산하시오.", ans:"2",
+      sim:{ text:"(−5) − (−2) + 6 을 계산하시오.", ans:"3" },
+      hint:"빼기를 더하기로 바꿀 때 빼는 수의 부호를 반대로: −(−7) = +7." },
+    { id:6, unit:3, topic:"혼합 계산", text:"(−2)³ ÷ 4 − 3 × (−1/3) 을 계산하시오.", ans:"−1",
+      sim:{ text:"(−3)² ÷ 3 − 4 × (−1/2) 을 계산하시오.", ans:"5" },
+      hint:"거듭제곱 → 곱셈·나눗셈 → 덧셈·뺄셈 순서. (−2)³의 부호는 몇 번 곱했는지로 판단." },
+    { id:7, unit:4, topic:"식의 값", text:"<i>x</i> = −2 일 때, 3<i>x</i>² − <i>x</i> 의 값을 구하시오.", ans:"14",
+      sim:{ text:"<i>x</i> = −3 일 때, 2<i>x</i>² + <i>x</i> 의 값을 구하시오.", ans:"15" },
+      hint:"음수를 대입할 때는 반드시 괄호. 3x²는 3 × x²이고 (3x)²와 다름." },
+    { id:8, unit:4, topic:"일차식의 계산", text:"2(3<i>x</i> − 1) − (<i>x</i> − 4) 를 간단히 하시오.", ans:"5x + 2",
+      sim:{ text:"3(2<i>x</i> + 1) − (<i>x</i> − 5) 를 간단히 하시오.", ans:"5x + 8" },
+      hint:"괄호 앞 수는 괄호 안 모든 항에 곱함. 괄호 앞 −는 안의 부호를 모두 바꿈." },
+    { id:9, unit:5, topic:"이항", text:"일차방정식 3<i>x</i> − 5 = <i>x</i> + 7 을 푸시오.", ans:"x = 6",
+      sim:{ text:"일차방정식 5<i>x</i> − 3 = 2<i>x</i> + 9 를 푸시오.", ans:"x = 4" },
+      hint:"이항하면 부호가 바뀜. 같은 문항에서 이항 개념 오류(2명)와 계산 실수(2명)가 나뉨." },
+    { id:10, unit:5, topic:"계수가 분수인 방정식", text:"일차방정식 (<i>x</i> − 1)/2 − (2<i>x</i> + 1)/3 = 1 을 푸시오.", ans:"x = −11",
+      sim:{ text:"일차방정식 (<i>x</i> + 1)/3 − (<i>x</i> − 2)/2 = 1 을 푸시오.", ans:"x = 2" },
+      hint:"분모의 최소공배수 6을 우변을 포함한 모든 항에 곱하기. −2(2x + 1)의 부호 주의." },
+    { id:11, unit:6, topic:"연속하는 수", text:"연속하는 세 자연수의 합이 57일 때, 가장 큰 수를 구하시오.", ans:"20",
+      sim:{ text:"연속하는 세 짝수의 합이 66일 때, 가장 큰 수를 구하시오.", ans:"24" },
+      hint:"식을 세우기 전에 x가 가운데 수인지 가장 작은 수인지 적고, '가장 큰 수'에 밑줄." },
+    { id:12, unit:6, topic:"거리·속력·시간", text:"집에서 도서관까지 갈 때는 시속 4 km, 올 때는 시속 6 km로 걸었더니 모두 1시간 15분이 걸렸다. 집에서 도서관까지의 거리를 구하시오.", ans:"3 km",
+      sim:{ text:"집에서 공원까지 갈 때는 시속 3 km, 올 때는 시속 5 km로 걸었더니 모두 1시간 20분이 걸렸다. 집에서 공원까지의 거리를 구하시오.", ans:"5/2 km" },
+      hint:"시간 = 거리 ÷ 속력. 1시간 15분 = 5/4시간처럼 단위부터 맞추기. 원인이 네 가지로 갈려 학생별로 다르게 지도." },
+    { id:13, unit:7, topic:"사분면", text:"점 (<i>a</i>, <i>b</i>)가 제2사분면 위의 점일 때, 점 (−<i>a</i>, <i>ab</i>)는 제몇 사분면 위의 점인가?", ans:"제4사분면",
+      sim:{ text:"점 (<i>a</i>, <i>b</i>)가 제4사분면 위의 점일 때, 점 (<i>b</i>, −<i>a</i>)는 제몇 사분면 위의 점인가?", ans:"제3사분면" },
+      hint:"a, b 부호를 먼저 정하고 −a, ab의 부호를 따로 판단. 음수 × 양수 = 음수." },
+    { id:14, unit:7, topic:"좌표평면 위의 도형", text:"세 점 A(−2, 1), B(3, 1), C(3, 5)를 꼭짓점으로 하는 삼각형 ABC의 넓이를 구하시오.", ans:"10",
+      sim:{ text:"세 점 A(−1, −2), B(4, −2), C(4, 4)를 꼭짓점으로 하는 삼각형 ABC의 넓이를 구하시오.", ans:"15" },
+      hint:"좌표 사이 거리는 큰 값 − 작은 값: 3 − (−2) = 5. 삼각형 넓이의 1/2 확인." },
+    { id:15, unit:8, topic:"반비례 관계식", text:"<i>y</i>가 <i>x</i>에 반비례하고 <i>x</i> = 3일 때 <i>y</i> = −4이다. <i>x</i> = −2일 때 <i>y</i>의 값을 구하시오.", ans:"6",
+      sim:{ text:"<i>y</i>가 <i>x</i>에 반비례하고 <i>x</i> = 2일 때 <i>y</i> = −6이다. <i>x</i> = −3일 때 <i>y</i>의 값을 구하시오.", ans:"4" },
+      hint:"반비례는 xy가 일정, 정비례는 y ÷ x가 일정. 문제의 낱말로 먼저 판단하고 마지막 대입까지." },
+    { id:16, unit:8, topic:"반비례 활용", text:"넓이가 24 cm²인 직사각형의 가로를 <i>x</i> cm, 세로를 <i>y</i> cm라 할 때, <i>x</i>와 <i>y</i> 사이의 관계식과 가로가 8 cm일 때의 세로를 구하시오.", ans:"y = 24/x, 3 cm",
+      sim:{ text:"넓이가 30 cm²인 직사각형의 가로를 <i>x</i> cm, 세로를 <i>y</i> cm라 할 때, 관계식과 가로가 6 cm일 때의 세로를 구하시오.", ans:"y = 30/x, 5 cm" },
+      hint:"넓이가 일정하면 가로 × 세로 = 24, 즉 반비례. 관계식을 구한 뒤 값 대입까지 확인." }
+  ],
+  // s 학생, q 문항, given 쓴 답, work 풀이 줄, err 처음 틀린 줄(0부터, 없으면 null), stop 풀이 중단, cause 원인, conf 분류 신뢰도, why 근거
+  records: [
+    {s:"B",q:1,given:"2² × 3 × 5",work:["180 = 2² × 45","45 = 3 × 15 = 3 × 3 × 5","180 = 2² × 3 × 5"],err:2,cause:"K",conf:.75,why:"45를 3 × 3 × 5까지 바르게 나눴지만, 마지막 줄에 옮겨 쓸 때 3을 하나 빠뜨림."},
+    {s:"A",q:2,given:"144명",work:["48과 72의 최소공배수","48 = 2⁴ × 3, 72 = 2³ × 3²","최소공배수 = 2⁴ × 3² = 144","답 144명"],err:0,cause:"C",conf:.85,why:"계산은 맞음. '최대한 많은 학생에게 똑같이'에 최대공약수가 아니라 최소공배수를 고름."},
+    {s:"D",q:2,given:"풀이 중단",work:["48 = 2⁴ × 3","72 = 2³ × 3²"],err:null,stop:true,cause:"S",conf:.6,why:"소인수분해까지는 맞음. 다음에 무엇을 구해야 하는지 정하지 못하고 멈춤."},
+    {s:"H",q:2,given:"2명",work:["48 ÷ 2 = 24, 72 ÷ 2 = 36","답 2명"],err:0,cause:"C",conf:.55,why:"공약수 하나(2)로 나눔. 최대공약수의 뜻을 모르는 것으로 추정. 문제를 덜 읽은 것일 수도 있음."},
+    {s:"A",q:3,given:"−1/2, −5/2, −3, 0, 2",work:["절댓값: 1/2 < 5/2 < 3","작은 것부터: −1/2, −5/2, −3, 0, 2"],err:1,cause:"C",conf:.9,why:"음수도 절댓값이 작은 쪽이 작다고 판단. 음수는 절댓값이 클수록 작다는 개념이 없음."},
+    {s:"C",q:3,given:"2, 0, −1/2, −5/2, −3",work:["−5/2 = −2.5, −1/2 = −0.5","−3 < −2.5 < −0.5 < 0 < 2","2, 0, −1/2, −5/2, −3"],err:2,cause:"R",conf:.85,why:"대소 비교는 맞음. '작은 것부터'를 놓치고 큰 것부터 나열함."},
+    {s:"C",q:4,given:"6개",work:["−3, −2, −1, 1, 2, 3","답 6개"],err:0,cause:"C",conf:.55,why:"0을 빠뜨림. 0도 정수이고 |0| = 0이라는 점을 놓친 것으로 추정. 단순 실수일 수도 있음."},
+    {s:"D",q:4,given:"5개",work:["−2, −1, 0, 1, 2","답 5개"],err:0,cause:"R",conf:.75,why:"'3 이하'를 '3 미만'으로 읽어 3과 −3이 빠짐."},
+    {s:"A",q:5,given:"−12",work:["(−3) − (−7) + (−2)","= (−3) − 7 − 2","= −12"],err:1,cause:"C",conf:.85,why:"−(−7)을 −7로 바꿈. 음수를 빼는 것은 양수를 더하는 것과 같다는 규칙이 없음."},
+    {s:"B",q:5,given:"−6",work:["(−3) + (+7) + (−2)","= (−4) + (−2)","= −6"],err:1,cause:"K",conf:.8,why:"빼기를 더하기로 바꾼 첫 줄은 맞음. (−3) + 7을 −4로 계산한 부호 실수."},
+    {s:"B",q:6,given:"3",work:["(−2)³ = 8","8 ÷ 4 = 2","3 × (−1/3) = −1","2 − (−1) = 3"],err:0,cause:"K",conf:.6,why:"(−2)³을 8로 계산. 계산 순서는 맞음. 홀수 번 곱하면 음수라는 개념 문제일 수도 있어 확인 필요."},
+    {s:"D",q:6,given:"5/3",work:["(−8) ÷ 4 − 3 = −5","−5 × (−1/3) = 5/3"],err:0,cause:"C",conf:.85,why:"뺄셈을 곱셈보다 먼저 함. 혼합 계산의 순서(곱셈·나눗셈 먼저)를 모름."},
+    {s:"F",q:6,given:"−3",work:["(−8) ÷ 4 = −2","3 × (−1/3) = −1","−2 − 1 = −3"],err:2,cause:"K",conf:.7,why:"−2 − (−1)을 −2 − 1로 씀. 5번에서 같은 규칙을 바르게 썼으므로 계산 실수로 판단."},
+    {s:"H",q:6,given:"무응답",work:[],err:null,cause:"S",conf:.5,why:"풀이 흔적 없음. 원인을 판단할 근거가 없어 확인 필요."},
+    {s:"C",q:7,given:"10",work:["3 × (−2)² − 2","= 12 − 2 = 10"],err:0,cause:"K",conf:.7,why:"−x 자리를 −(−2)가 아닌 −2로 씀. 음수를 대입할 때 괄호를 빠뜨림."},
+    {s:"F",q:7,given:"38",work:["(3 × (−2))² − (−2)","= 36 + 2 = 38"],err:0,cause:"C",conf:.8,why:"3x²를 (3x)²로 계산. 계수와 거듭제곱의 범위를 구분하지 못함."},
+    {s:"B",q:8,given:"5x − 6",work:["6x − 2 − x − 4","= 5x − 6"],err:0,cause:"K",conf:.65,why:"−(x − 4)를 −x − 4로 풀어 뒤 항의 부호를 바꾸지 않음."},
+    {s:"G",q:8,given:"5x − 2",work:["6x − 2 − x + 4","= 5x − 2"],err:1,cause:"K",conf:.75,why:"괄호는 바르게 풂. 상수항 −2 + 4를 −2로 계산."},
+    {s:"A",q:9,given:"x = 3",work:["3x + x = 7 + 5","4x = 12","x = 3"],err:0,cause:"C",conf:.9,why:"x를 왼쪽으로 옮기면서 부호를 바꾸지 않음. 이항의 뜻을 모름."},
+    {s:"B",q:9,given:"x = 13/2",work:["3x − x = 7 + 5","2x = 13","x = 13/2"],err:1,cause:"K",conf:.85,why:"이항은 맞음. 7 + 5를 13으로 계산."},
+    {s:"D",q:9,given:"x = 10",work:["3x − x = 7 + 5","2x = 12","x = 10"],err:2,cause:"K",conf:.65,why:"2x = 12까지 맞음. 12 ÷ 2 대신 12 − 2를 한 것으로 추정."},
+    {s:"H",q:9,given:"x = 1",work:["3x − x = 7 − 5","2x = 2","x = 1"],err:0,cause:"C",conf:.8,why:"x 항은 바르게 옮겼지만 −5를 오른쪽으로 옮길 때 부호를 바꾸지 않음."},
+    {s:"B",q:10,given:"x = −7",work:["3(x − 1) − 2(2x + 1) = 6","3x − 3 − 4x + 2 = 6","−x − 1 = 6","x = −7"],err:1,cause:"K",conf:.8,why:"양변에 6을 곱한 첫 줄은 맞음. −2 × 1을 +2로 계산."},
+    {s:"C",q:10,given:"x = −6",work:["3(x − 1) − 2(2x + 1) = 1","3x − 3 − 4x − 2 = 1","−x − 5 = 1","x = −6"],err:0,cause:"C",conf:.6,why:"좌변에만 6을 곱하고 우변 1에는 곱하지 않음. 등식의 성질 개념 문제인지 실수인지 확인 필요."},
+    {s:"D",q:10,given:"풀이 중단",work:["(x − 1)/2 − (2x + 1)/3 = 1","(x − 1 − 2x − 1)/6 = 1"],err:1,stop:true,cause:"C",conf:.7,why:"분자끼리 빼고 분모끼리 곱함. 분모가 다른 분수의 계산(통분)을 모름."},
+    {s:"F",q:10,given:"x = 11",work:["3(x − 1) − 2(2x + 1) = 6","3x − 3 − 4x − 2 = 6","−x = 11","x = 11"],err:3,cause:"K",conf:.8,why:"−x = 11까지 맞음. 양변에 −1을 곱할 때 부호를 바꾸지 않음."},
+    {s:"H",q:10,given:"무응답",work:[],err:null,cause:"S",conf:.5,why:"풀이 흔적 없음. 원인을 판단할 근거가 없어 확인 필요."},
+    {s:"A",q:11,given:"19",work:L3,err:3,cause:"R",conf:.9,why:"식과 계산은 맞음. x는 가운데 수인데 가장 큰 수를 묻는 것을 놓치고 19를 답함."},
+    {s:"C",q:11,given:"19",work:L3,err:3,cause:"R",conf:.9,why:"식과 계산은 맞음. 가운데 수 19를 그대로 답함."},
+    {s:"D",q:11,given:"19",work:L3,err:3,cause:"R",conf:.85,why:"식과 계산은 맞음. 가운데 수 19를 그대로 답함."},
+    {s:"E",q:11,given:"18",work:["x + (x + 1) + (x + 2) = 57","3x + 3 = 57","x = 18","답 18"],err:3,cause:"R",conf:.85,why:"식과 계산은 맞음. x는 가장 작은 수인데 그대로 답함."},
+    {s:"H",q:11,given:"19",work:["57 ÷ 3 = 19","답 19"],err:0,cause:"R",conf:.55,why:"식 없이 57 ÷ 3으로 가운데 수를 구함. 물음을 놓쳤는지, 연속하는 수의 뜻을 모르는지 불분명."},
+    {s:"A",q:12,given:"2.76 km",work:["x/4 + x/6 = 1.15","3x + 2x = 13.8","5x = 13.8, x = 2.76"],err:0,cause:"C",conf:.8,why:"식의 틀은 맞음. 1시간 15분을 1.15시간으로 씀(바른 값 5/4시간). 분을 시간으로 바꾸는 개념이 없음."},
+    {s:"B",q:12,given:"5 km",work:["x/4 + x/6 = 5/4","3x + 2x = 15","5x = 15","x = 5"],err:3,cause:"K",conf:.8,why:"식과 단위 변환은 모두 맞음. 마지막에 15 ÷ 5를 5로 계산."},
+    {s:"C",q:12,given:"3시간",work:["x/4 + x/6 = 5/4","3x + 2x = 15","x = 3","답 3시간"],err:3,cause:"R",conf:.7,why:"x = 3까지 맞음. 구하는 것은 거리(km)인데 단위를 시간으로 씀."},
+    {s:"D",q:12,given:"무응답",work:[],err:null,cause:"S",conf:.6,why:"풀이 흔적 없음. 2번에서도 식을 세우는 단계에서 멈춤. 활용 문제의 식 세우기 전략이 없는 것으로 추정."},
+    {s:"F",q:12,given:"1/8 km",work:["4x + 6x = 5/4","10x = 5/4","x = 1/8"],err:0,cause:"S",conf:.6,why:"시간 대신 속력 × 거리를 더함. 시간 = 거리 ÷ 속력으로 식을 세우지 못함. 개념 부족일 수도 있음."},
+    {s:"H",q:12,given:"180 km",work:["x/4 + x/6 = 75","3x + 2x = 900","x = 180"],err:0,cause:"C",conf:.7,why:"속력은 시속인데 시간을 75분으로 넣어 단위가 맞지 않음. 이후 계산은 맞음."},
+    {s:"F",q:13,given:"제1사분면",work:["a < 0, b > 0","−a > 0, ab > 0","제1사분면"],err:1,cause:"K",conf:.65,why:"a, b와 −a의 부호는 맞음. 음수 × 양수를 양수로 판단."},
+    {s:"B",q:14,given:"20",work:["밑변 = 3 − (−2) = 5","높이 = 5 − 1 = 4","넓이 = 5 × 4 = 20"],err:2,cause:"K",conf:.8,why:"밑변과 높이는 맞음. 삼각형 넓이에서 1/2을 빠뜨림."},
+    {s:"D",q:14,given:"2",work:["밑변 = 3 − 2 = 1","높이 = 4","넓이 = 1/2 × 1 × 4 = 2"],err:0,cause:"C",conf:.6,why:"−2와 3 사이의 거리를 3 − 2로 계산. 음수 좌표 사이의 거리 개념인지 부호 실수인지 확인 필요."},
+    {s:"H",q:14,given:"무응답",work:[],err:null,cause:"S",conf:.55,why:"풀이 흔적 없음. 원인을 판단할 근거가 없어 확인 필요."},
+    {s:"A",q:15,given:"8/3",work:["y = ax, −4 = 3a, a = −4/3","y = −4/3 × (−2) = 8/3"],err:0,cause:"C",conf:.85,why:"반비례를 정비례 식 y = ax로 세움. 이후 계산은 맞음."},
+    {s:"D",q:15,given:"y = −12/x",work:["y = a/x, −4 = a/3, a = −12","y = −12/x"],err:null,stop:true,cause:"R",conf:.6,why:"관계식까지 맞음. x = −2일 때의 값을 구하라는 물음을 놓친 것으로 추정."},
+    {s:"F",q:15,given:"−6",work:["xy = a, a = 3 × (−4) = −12","−2 × y = −12","y = −6"],err:2,cause:"K",conf:.8,why:"관계식은 맞음. 양변을 −2로 나눌 때 부호 실수."},
+    {s:"H",q:15,given:"8/3",work:["y = −4/3 x","y = −4/3 × (−2) = 8/3"],err:0,cause:"C",conf:.75,why:"반비례를 정비례 식으로 세움."},
+    {s:"A",q:16,given:"y = 24x, 192 cm",work:["y = 24x","x = 8 → y = 192"],err:0,cause:"C",conf:.8,why:"넓이가 일정하면 반비례인데 정비례 식을 세움. 15번과 같은 개념 문제."},
+    {s:"E",q:16,given:"y = 24/x, 4 cm",work:["y = 24/x","x = 8 → y = 24/8 = 4"],err:1,cause:"K",conf:.85,why:"관계식은 맞음. 24 ÷ 8을 4로 계산."},
+    {s:"H",q:16,given:"무응답",work:[],err:null,cause:"S",conf:.5,why:"풀이 흔적 없음. 원인을 판단할 근거가 없어 확인 필요."}
+  ]
+};
+
+const CK=["C","K","R","S"];
+const N=DATA.students.length;
+const PQ=DATA.exam.perQ;
+const state={recs:DATA.records.map((r,i)=>({...r,id:i,confirmed:false,byTeacher:false})),tab:"brief",stu:"A",showAll:false};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const qOf=n=>DATA.questions.find(q=>q.id===n);
+const pct=x=>Math.round(x*1000)/10;
+const LOW=0.7;
+const emptyBy=()=>({C:0,K:0,R:0,S:0});
+
+function qStat(q){
+  const rs=state.recs.filter(r=>r.q===q.id);
+  const by=emptyBy(); rs.forEach(r=>by[r.cause]++);
+  const mx=Math.max(...CK.map(k=>by[k]));
+  const top=mx>0?CK.filter(k=>by[k]===mx):[];
+  return {q,rs,n:rs.length,rate:rs.length/N,by,top,kinds:CK.filter(k=>by[k]>0).length};
+}
+function sStat(s){
+  const rs=state.recs.filter(r=>r.s===s);
+  const by=emptyBy(); rs.forEach(r=>by[r.cause]++);
+  const mx=Math.max(...CK.map(k=>by[k]));
+  return {s,rs,score:Math.round((PQ-rs.length)/PQ*100),by,top:CK.filter(k=>by[k]===mx&&mx>0)};
+}
+const causeTag=k=>`<span class="tag ${k}">${DATA.causes[k].short}</span>`;
+const topNames=a=>a.map(k=>DATA.causes[k].name).join(" · ");
+const unitLabel=q=>`${q.unit}단원 ${DATA.units[q.unit]}`;
+
+function workBox(r,sm){
+  const cls="paper"+(sm?" sm":"");
+  if(!r.work.length) return `<div class="${cls} empty">풀이 없음 (빈칸)</div>`;
+  const lines=r.work.map((l,i)=>i===r.err
+    ?`<div class="wl err"><span class="t">${esc(l)}</span><span class="errmark">← 여기서 틀림</span></div>`
+    :`<div class="wl"><span class="t">${esc(l)}</span></div>`).join("");
+  return `<div class="${cls}" role="group" aria-label="학생 풀이">${lines}${r.stop?'<div class="wl stop">… 여기서 풀이를 멈춤</div>':""}</div>`;
+}
+function statusTxt(r){
+  const lowMark=r.conf<LOW&&!r.confirmed;
+  return `<span class="small ${lowMark?"low":"muted"}">${r.byTeacher?"교사 지정":r.confirmed?"교사 확인":lowMark?"확인 대기 (신뢰도 "+pct(r.conf)+"%)":"신뢰도 "+pct(r.conf)+"%"}</span>`;
+}
+
+function renderVersus(){
+  const qs=DATA.questions.map(qStat).filter(o=>o.n>0);
+  const o=[...qs].sort((a,b)=>b.kinds-a.kinds||b.n-a.n||a.q.id-b.q.id)[0];
+  const groups=CK.filter(k=>o.by[k]>0).map(k=>{
+    const rs=o.rs.filter(r=>r.cause===k);
+    const who=rs.map(r=>{
+      const line=r.err!=null?`<span class="h">${esc(r.work[r.err])}</span>`:`<span class="h none">${r.work.length?"풀이 중단":"빈칸"}</span>`;
+      return `<div class="mini"><b>학생 ${r.s}</b>${line}</div>`;
+    }).join("");
+    return `<div class="grp"><div>${causeTag(k)}<div class="small muted num">${rs.length}명</div></div>
+      <div class="who">${who}<div class="rx"><b>지도</b> ${DATA.causes[k].tip}</div></div></div>`;
+  }).join("");
+  return `<div class="card">
+    <div><h2>같은 문항, 다른 원인</h2><p class="muted small">${o.q.id}번(${unitLabel(o.q)})에서 ${o.n}명이 틀렸습니다. 풀이를 읽으면 원인이 ${o.kinds}가지로 나뉩니다. 빨간 물결은 학생이 처음 틀린 줄입니다.</p></div>
+    <div class="versus">
+      <div class="old"><span class="small muted">정답·오답만 보는 오답노트</span>
+        <span class="big">${o.q.id}번 ${o.q.topic} · ${o.n}명 오답</span>
+        <span class="small">"${DATA.units[o.q.unit]} 단원이 약함"으로 묶고, 같은 단원 문제를 ${o.n}명 모두에게 더 풀게 합니다.</span></div>
+      <div class="new"><span class="small muted">풀이 한 줄을 읽는 한 줄 진단 (원인별 처방)</span>${groups}</div>
+    </div></div>`;
+}
+
+function renderBrief(){
+  const qs=DATA.questions.map(qStat);
+  const ss=DATA.students.map(sStat);
+  const scores=ss.map(x=>x.score);
+  const avg=scores.reduce((a,b)=>a+b,0)/N;
+  const order=[...qs].sort((a,b)=>b.rate-a.rate||a.q.id-b.q.id).slice(0,4);
+  const by=emptyBy(); state.recs.forEach(r=>by[r.cause]++);
+  const total=state.recs.length;
+  const pending=state.recs.filter(r=>r.conf<LOW&&!r.confirmed).length;
+  const watch=ss.filter(x=>x.score<=50).sort((a,b)=>a.score-b.score||a.s.localeCompare(b.s));
+  const orderHtml=order.map(o=>{
+    const share=o.n?o.by[o.top[0]]/o.n:0;
+    const mode=share>=0.6?`<b>반 전체 설명</b> 대부분 ${topNames(o.top)}(${o.by[o.top[0]]}/${o.n}명)`:`<b>원인이 갈림</b> ${CK.filter(k=>o.by[k]>0).map(k=>DATA.causes[k].short+" "+o.by[k]).join(", ")} → 학생별로 다르게 지도`;
+    return `<li><div><b>${o.q.id}번 · ${o.q.topic}</b> <span class="muted num">${o.n}/${N}명 오답 (${pct(o.rate)}%)</span>
+      <div class="small muted">${unitLabel(o.q)}</div>
+      <div class="small">${mode}</div>
+      <div class="small"><b>설명 포인트</b> ${o.q.hint}</div></div></li>`;
+  }).join("");
+  const causeBar=CK.filter(k=>by[k]>0).map(k=>`<div class="${k}" style="flex:${by[k]}" title="${DATA.causes[k].name} ${by[k]}건">${by[k]}</div>`).join("");
+  const legend=CK.map(k=>`<span>${causeTag(k)} ${DATA.causes[k].name} <b class="num">${by[k]}건 (${pct(by[k]/total)}%)</b></span>`).join("");
+  const units=Object.keys(DATA.units).map(Number);
+  const uRows=units.map(u=>{
+    const qids=DATA.questions.filter(q=>q.unit===u).map(q=>q.id);
+    const rs=state.recs.filter(r=>qids.includes(r.q));
+    const ub=emptyBy(); rs.forEach(r=>ub[r.cause]++);
+    const cap=N*qids.length;
+    return `<div class="qrow"><div class="lbl"><b>${u}단원</b> <span class="muted">${DATA.units[u]}</span></div>
+      <div class="track" role="img" aria-label="${u}단원 오답 ${rs.length}건">${CK.filter(k=>ub[k]>0).map(k=>`<div class="${k}" style="width:${ub[k]/cap*100}%" title="${DATA.causes[k].short} ${ub[k]}건"></div>`).join("")}</div>
+      <div class="num">${rs.length}/${cap} · ${pct(rs.length/cap)}%</div></div>`;
+  }).join("");
+  const qRows=qs.map(o=>`<div class="qrow"><div class="lbl"><b>${o.q.id}번</b> <span class="muted">${o.q.topic}</span></div>
+    <div class="track" role="img" aria-label="${o.q.id}번 오답률 ${pct(o.rate)}%">${CK.filter(k=>o.by[k]>0).map(k=>`<div class="${k}" style="width:${o.by[k]/N*100}%" title="${DATA.causes[k].short} ${o.by[k]}명"></div>`).join("")}</div>
+    <div class="num">${o.n}/${N} · ${pct(o.rate)}%</div></div>`).join("");
+  const axis=`<div class="axis"><div></div><div class="ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div><div></div></div>`;
+  const watchHtml=watch.map(x=>`<div class="row"><b>학생 ${x.s}</b><span class="num">${x.score}점</span>
+    <span>${CK.filter(k=>x.by[k]>0).map(k=>causeTag(k)+" "+x.by[k]).join(" &nbsp; ")}</span>
+    <button class="btn ghost" data-go-stu="${x.s}">오답 처방전 보기</button></div>`).join("");
+  $("p-brief").innerHTML=`
+    ${pending?`<div class="notice"><span>원인 분류의 신뢰도가 ${LOW*100}% 미만인 <b class="num">${pending}건</b>이 확인을 기다립니다. 확인하면 아래 통계가 바로 바뀝니다.</span><button class="btn" data-go-tab="chk">진단서 확인하러 가기</button></div>`:`<div class="notice" style="background:var(--soft);border-color:var(--line)"><span>신뢰도가 낮은 분류를 모두 확인했습니다.</span></div>`}
+    <div class="kpis">
+      <div class="kpi"><b class="num">${avg.toFixed(1)}점</b><span>반 평균 (${N}명)</span></div>
+      <div class="kpi"><b class="num">${Math.max(...scores)} / ${Math.min(...scores)}점</b><span>최고 / 최저</span></div>
+      <div class="kpi"><b class="num">${total}건</b><span>오답 (${N*PQ}문항 중)</span></div>
+      <div class="kpi"><b class="num">${pct(1-total/(N*PQ))}%</b><span>정답률</span></div>
+    </div>
+    ${renderVersus()}
+    <div class="cols">
+      <div class="card"><div><h2>오늘 수업 설명 순서</h2><p class="muted small">오답률이 높은 문항 순서입니다. 같으면 번호가 빠른 문항이 먼저입니다.</p></div><ol class="order">${orderHtml}</ol></div>
+      <div class="card"><div><h2>주의가 필요한 학생</h2><p class="muted small">점수가 50점 이하인 학생입니다.</p></div><div class="watch">${watchHtml||"<p class='muted'>해당 학생이 없습니다.</p>"}</div></div>
+    </div>
+    <div class="card">
+      <div><h2>오답 원인 분포</h2><p class="muted small">오답 ${total}건의 원인 비율입니다. 막대 안의 숫자는 건수입니다.</p></div>
+      <div class="stack" role="img" aria-label="오답 원인 분포">${causeBar}</div>
+      <div class="legend">${legend}</div>
+    </div>
+    <div class="card">
+      <div><h2>단원별 오답</h2><p class="muted small">단원마다 2문항, 막대 전체 길이가 ${N*2}건(${N}명 × 2문항)입니다. 색은 오답 원인입니다.</p></div>
+      <div style="display:flex;flex-direction:column;gap:8px">${uRows}${axis}</div>
+    </div>
+    <div class="card">
+      <div><h2>문항별 오답률</h2><p class="muted small">막대 전체 길이가 ${N}명입니다. 색은 오답 원인입니다.</p></div>
+      <div style="display:flex;flex-direction:column;gap:8px">${qRows}${axis}</div>
+    </div>`;
+}
+
+function renderStu(){
+  const s=state.stu, st=sStat(s);
+  const chips=DATA.students.map(x=>`<button class="chip" aria-pressed="${x===s}" data-stu="${x}">학생 ${x}</button>`).join("");
+  const items=[...st.rs].sort((a,b)=>a.q-b.q).map(r=>{
+    const q=qOf(r.q);
+    return `<div class="item">
+      <div class="side">
+        <div><b>${q.id}번 · ${q.topic}</b> <span class="small muted">${unitLabel(q)}</span></div>
+        <div class="prob muted">${q.text}</div>
+        ${workBox(r)}
+        <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 <b>${esc(q.ans)}</b></span></div>
+      </div>
+      <div class="side">
+        <div>${causeTag(r.cause)} ${statusTxt(r)}</div>
+        <div class="small">${esc(r.why)}</div>
+        <div class="note small"><b>처방 문제</b> <span class="muted">같은 유형의 연습 문제</span><br>${q.sim.text}<details><summary>정답 보기</summary>${esc(q.sim.ans)}</details></div>
+      </div></div>`;
+  }).join("");
+  const focus=st.top.length?st.top.map(k=>`${DATA.causes[k].name}(${st.by[k]}문항)`).join(" · "):"";
+  $("p-stu").innerHTML=`
+    <div class="chips" role="group" aria-label="학생 선택">${chips}</div>
+    <div class="card">
+      <div><h2>학생 ${s} 오답 처방전</h2><p class="muted small num">${DATA.exam.title} · ${st.score}점 · 오답 ${st.rs.length}문항 · ${CK.filter(k=>st.by[k]>0).map(k=>DATA.causes[k].short+" "+st.by[k]).join(", ")}</p></div>
+      ${st.rs.length?`<div class="note"><b>이번 숙제에서 가장 먼저 고칠 것</b><br>${focus}. ${st.top.map(k=>DATA.causes[k].tip).join(" ")}</div>
+      <div style="display:flex;flex-direction:column;gap:12px">${items}</div>`:`<p>틀린 문항이 없습니다.</p>`}
+    </div>`;
+}
+
+function renderChk(){
+  const recs=[...state.recs].sort((a,b)=>a.conf-b.conf||a.q-b.q);
+  const list=recs.filter(r=>state.showAll||(r.conf<LOW&&!r.confirmed));
+  const grid=DATA.students.map(s=>`<tr><td><b>학생 ${s}</b></td>${DATA.questions.map(q=>{
+    const r=state.recs.find(x=>x.s===s&&x.q===q.id);
+    return r?`<td><button class="cell" data-rec="${r.id}" aria-label="학생 ${s} ${q.id}번 오답, ${DATA.causes[r.cause].name}">${DATA.causes[r.cause].short.slice(0,1)}</button></td>`:`<td><span class="cell ok" aria-label="정답">○</span></td>`;
+  }).join("")}</tr>`).join("");
+  const items=list.map(r=>{
+    const q=qOf(r.q);
+    return `<div class="rec" id="rec-${r.id}">
+      <div class="side" style="display:flex;flex-direction:column;gap:8px;min-width:0"><div><b>학생 ${r.s} · ${q.id}번</b> <span class="muted small">${q.topic}</span></div>
+        ${workBox(r,true)}
+        <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 ${esc(q.ans)}</span></div></div>
+      <div class="small" style="display:flex;flex-direction:column;gap:6px"><div>AI 분류 ${causeTag(r.cause)} ${statusTxt(r)}</div><div>${esc(r.why)}</div></div>
+      <div class="ctl">
+        <label class="small muted" for="sel-${r.id}">원인 지정</label>
+        <select id="sel-${r.id}" data-sel="${r.id}">${CK.map(k=>`<option value="${k}"${k===r.cause?" selected":""}>${DATA.causes[k].name}</option>`).join("")}</select>
+        ${r.confirmed?`<span class="done">${r.byTeacher?"교사 지정 완료":"확인 완료"}</span>`:`<button class="btn" data-ok="${r.id}">이 분류가 맞음</button>`}
+      </div></div>`;
+  }).join("");
+  const pending=state.recs.filter(r=>r.conf<LOW&&!r.confirmed).length;
+  $("p-chk").innerHTML=`
+    <div class="card">
+      <div><h2>채점표 (가상 데이터)</h2><p class="muted small">○는 정답입니다. 글자는 오답 원인의 첫 글자입니다 (개 개념, 계 계산, 오 오독, 전 전략). 칸을 누르면 아래 목록에서 해당 건을 찾습니다.</p></div>
+      <div class="tablewrap"><table class="grid"><thead><tr><th></th>${DATA.questions.map(q=>`<th title="${unitLabel(q)}">${q.id}</th>`).join("")}</tr></thead><tbody>${grid}</tbody></table></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
+        <div><h2>진단서 확인</h2><p class="muted small">학생 풀이와 AI가 짚은 틀린 줄을 보고, 원인이 틀렸으면 바꾸고 맞으면 확인을 누릅니다. 확인 대기 <b class="num">${pending}건</b>.</p></div>
+        <div class="chips"><button class="chip" aria-pressed="${!state.showAll}" data-filter="pending">확인 대기만</button><button class="chip" aria-pressed="${state.showAll}" data-filter="all">전체 ${state.recs.length}건</button></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">${items||"<p class='muted'>확인할 건이 없습니다.</p>"}</div>
+    </div>`;
+}
+
+function show(tab){
+  state.tab=tab;
+  for(const t of ["brief","stu","chk"]){
+    $("p-"+t).hidden=t!==tab; $("t-"+t).setAttribute("aria-selected",String(t===tab));
+  }
+  render();
+}
+function render(){
+  $("examPill").textContent=`${DATA.exam.cls} · ${DATA.exam.title} · ${N}명 · ${PQ}문항 (8단원)`;
+  if(state.tab==="brief")renderBrief(); else if(state.tab==="stu")renderStu(); else renderChk();
+}
+document.addEventListener("click",e=>{
+  const t=e.target.closest("button"); if(!t)return;
+  if(t.id&&t.id.startsWith("t-")){show(t.id.slice(2));return}
+  if(t.dataset.goTab){show(t.dataset.goTab);return}
+  if(t.dataset.goStu){state.stu=t.dataset.goStu;show("stu");return}
+  if(t.dataset.stu){state.stu=t.dataset.stu;render();return}
+  if(t.dataset.filter){state.showAll=t.dataset.filter==="all";render();return}
+  if(t.dataset.ok!==undefined){state.recs[+t.dataset.ok].confirmed=true;render();return}
+  if(t.dataset.rec!==undefined){
+    const id=+t.dataset.rec; const r=state.recs[id];
+    if(!state.showAll&&!(r.conf<LOW&&!r.confirmed)){state.showAll=true;render()}
+    const el=$("rec-"+id); if(el){el.scrollIntoView({block:"center"});el.classList.add("flash");setTimeout(()=>el.classList.remove("flash"),1400)}
+  }
+});
+document.addEventListener("change",e=>{
+  const s=e.target.closest("select[data-sel]"); if(!s)return;
+  const r=state.recs[+s.dataset.sel];
+  if(s.value!==r.cause){r.cause=s.value;r.byTeacher=true}
+  r.confirmed=true; render();
+});
+render();
+</script>

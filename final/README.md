@@ -13,17 +13,26 @@
 | `dev/server.js` | 로컬 확인용 서버 (배포에는 쓰이지 않음) |
 
 ## 동작 방식
-1. 브라우저에서 사진을 1600px 이하 JPEG로 줄여 `/api/diagnose`로 보낸다.
+1. 브라우저에서 사진을 1600px 이하 JPEG로 줄여 `/api/diagnose`로 보낸다. 여러 장을 한꺼번에 올리면 학생을 차례로 배정하고 두 장씩 동시에 진단한다.
 2. 서버 함수가 Claude API에 사진·문제·정답을 보내고, `submit_diagnosis` 도구 형식(JSON)으로 판독한 줄, 처음 틀린 줄, 원인, 근거, 신뢰도, 처방 문제를 받는다.
-3. 선생님이 확인·수정하면 기록에 반영된다. 기록은 브라우저(localStorage)에만 저장된다. 사진은 서버에 저장하지 않는다.
-4. API 키가 없으면 **데모 모드**로, 샘플 반의 예시 결과를 보여 준다.
+3. 선생님이 확인·수정하면 기록에 반영된다. 여러 장일 때는 신뢰도 70% 이상인 진단을 한꺼번에 반영하고, 나머지는 한 장씩 확인한다. 점수는 학생마다 채점한 문항 수를 분모로 계산한다. 기록은 브라우저(localStorage)에만 저장된다. 사진은 서버에 저장하지 않는다.
+4. API 키가 없거나 체험 코드를 넣지 않으면 **데모 모드**로, 샘플 반의 예시 결과를 보여 준다.
 
 ## 배포 (Vercel)
 1. Vercel에서 이 저장소를 Import, Root Directory를 이 폴더로 지정.
-2. Settings → Environment Variables에 `ANTHROPIC_API_KEY` 추가 (선택: `CLAUDE_MODEL`).
+2. Settings → Environment Variables에 다음을 추가한다.
+
+   | 이름 | 내용 |
+   |---|---|
+   | `ANTHROPIC_API_KEY` | Claude API 키 (필수, 저장소에는 절대 넣지 않는다) |
+   | `ACCESS_CODE` | 체험 코드. 넣으면 이 코드를 입력한 사람만 실제 AI 진단을 쓴다 |
+   | `RATE_LIMIT` | 같은 IP의 10분당 진단 횟수 (기본 40) |
+   | `CLAUDE_MODEL` | 모델 이름 (기본 `claude-sonnet-5-5`) |
+
+   사용 횟수 제한은 서버 인스턴스 메모리 기준이라 대략적인 값이다. 비용 상한은 Claude Console의 월 사용 한도로 따로 걸어 둔다.
 3. Deploy. 이후 GitHub에 커밋하면 자동으로 다시 배포된다.
 
 ## 로컬 실행
 ```
-ANTHROPIC_API_KEY=... node dev/server.js   # http://localhost:3000
+ANTHROPIC_API_KEY=... ACCESS_CODE=... node dev/server.js   # http://localhost:3000
 ```

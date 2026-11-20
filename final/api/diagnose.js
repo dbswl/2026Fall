@@ -55,14 +55,45 @@ function parseDataUrl(s) {
   return m ? { media_type: m[1], data: m[2] } : null;
 }
 
+// ---- 사용량 제한 ----
+// ACCESS_CODE 가 설정되어 있으면 체험 코드가 맞을 때만 AI 진단을 한다 (코드가 없으면 화면은 데모 모드).
+// 같은 IP의 요청은 10분에 RATE_LIMIT 번까지 (서버 인스턴스 단위의 간단한 제한).
+const crypto = require('crypto');
+const RATE_LIMIT = Number(process.env.RATE_LIMIT || 40);
+const WINDOW_MS = 10 * 60 * 1000;
+const hits = new Map();
+function codeOk(given) {
+  const want = process.env.ACCESS_CODE;
+  if (!want) return true;
+  const a = Buffer.from(String(given || '')), b = Buffer.from(want);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function clientIp(req) {
+  const f = req.headers && (req.headers['x-forwarded-for'] || '');
+  return String(f).split(',')[0].trim() || (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+function rateOk(ip) {
+  const now = Date.now();
+  const list = (hits.get(ip) || []).filter(t => now - t < WINDOW_MS);
+  if (list.length >= RATE_LIMIT) { hits.set(ip, list); return false; }
+  list.push(now); hits.set(ip, list);
+  if (hits.size > 5000) hits.clear();
+  return true;
+}
+
 module.exports = async function handler(req, res) {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (req.method === 'GET') return res.status(200).json({ ready: !!key, model: key ? MODEL : null });
+  const code = req.headers && req.headers['x-access-code'];
+  if (req.method === 'GET') {
+    return res.status(200).json({ ready: !!key, needCode: !!process.env.ACCESS_CODE, codeOk: !!key && codeOk(code), model: key ? MODEL : null });
+  }
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ error: 'method_not_allowed' });
   }
   if (!key) return res.status(503).json({ error: 'no_api_key' });
+  if (!codeOk(code)) return res.status(401).json({ error: 'bad_code' });
+  if (!rateOk(clientIp(req))) return res.status(429).json({ error: 'rate_limited', message: '잠시 후 다시 시도해 주세요 (10분 사용 한도 초과)' });
 
   let body = req.body;
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }

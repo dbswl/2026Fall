@@ -204,3 +204,17 @@ dialog.zoom img{max-width:96vw;max-height:90vh;display:block;border-radius:8px}
   .card{border:0;padding:0}
   .item{break-inside:avoid}
 }
+/* 여러 장 진단 대기열 */
+.queue{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:10px;padding:8px;max-height:340px;overflow:auto}
+.qhead{display:flex;justify-content:space-between;align-items:center;font-size:.85rem;padding:0 2px 2px}
+.qrow2{display:grid;grid-template-columns:44px 1fr auto 24px;gap:8px;align-items:center;padding:4px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.qrow2:hover{background:var(--soft)} .qrow2.on{border-color:var(--accent);background:var(--soft)}
+.qrow2 img{width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:#fff}
+.qmeta{display:flex;flex-direction:column;gap:2px;min-width:0} .qmeta select{font-size:.82rem;padding:3px 6px;max-width:120px}
+.qstate{display:flex;gap:4px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.qst{font-size:.74rem;padding:2px 7px;border-radius:999px;background:var(--soft);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
+.qst.run{color:var(--accent);border-color:var(--accent)} .qst.ok{color:var(--ok);border-color:var(--ok)} .qst.bad{color:var(--wrong);border-color:currentColor}
+.qrow2 .x{border:0;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;line-height:1;padding:0}
+.bar{height:8px;border-radius:999px;background:var(--soft);overflow:hidden;border:1px solid var(--line)} .bar>div{height:100%;background:var(--accent);transition:width .3s}
+.codebox{padding:10px;border:1px dashed var(--accent);border-radius:10px;background:var(--soft)}
+.card.summary .res-head{align-items:center}

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>한 줄 진단 · 학원 강사를 위한 수학 오답 진단</title>
+<meta name="description" content="채점한 풀이 사진을 올리면 학생이 처음 틀린 줄과 그 원인을 찾아 주는 학원 수학 강사용 오답 진단 서비스">
+<meta property="og:title" content="한 줄 진단">
+<meta property="og:description" content="내일 수업 준비, 풀이 한 줄로 마칩니다.">
+<meta property="og:image" content="assets/media/intro-poster.jpg">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=Nanum+Pen+Script&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/landing.css">
+</head>
+<body class="landing">
+<nav class="nav">
+  <div class="in">
+    <a class="brand" href="#top"><span class="mark">∿</span><b>한 줄 진단</b></a>
+    <div class="links">
+      <a href="#problem">왜 필요한가</a><a href="#how">작동 방식</a><a href="#causes">원인 네 가지</a><a href="#outputs">결과물</a>
+      <a class="btn" href="app.html">선생님 화면 열기</a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <section class="hero">
+    <div class="in">
+      <div class="copy">
+        <p class="kicker">학원 수학 강사를 위한 오답 진단</p>
+        <h1>내일 수업 준비,<br><span class="hl">풀이 한 줄</span>로 마칩니다.</h1>
+        <p class="lead">채점한 풀이 사진을 올리면 학생이 <b>처음 틀린 줄</b>을 찾고, 그 줄에서 <b>왜 틀렸는지</b> 진단합니다. 반 전체가 어디서 막혔는지, 학생마다 무엇을 다시 연습해야 하는지 한눈에 정리됩니다.</p>
+        <div class="cta">
+          <a class="btn big" href="app.html">풀이 사진으로 진단해 보기</a>
+          <a class="btn ghost big" href="#video">소개 영상 보기</a>
+        </div>
+      </div>
+      <div class="shot" aria-label="진단 예시">
+        <div class="sheet">
+          <div class="q">12. 집에서 도서관까지 갈 때는 시속 4 km, 올 때는 시속 6 km로 걸었더니 1시간 15분이 걸렸다. 거리는?</div>
+          <div class="paper">
+            <div class="wl err"><span class="t">x/4 + x/6 = 1.15</span><span class="errmark">← 여기서 틀림</span></div>
+            <div class="wl"><span class="t">3x + 2x = 13.8</span></div>
+            <div class="wl"><span class="t">5x = 13.8, x = 2.76</span></div>
+          </div>
+        </div>
+        <div class="dxcard">
+          <div class="row"><span class="tag C">개념 부족</span><span class="small muted">신뢰도 80%</span></div>
+          <p>1시간 15분을 <b>1.15시간</b>으로 바꿈. 분을 시간으로 바꾸는 개념이 필요합니다. <span class="muted">(바른 값 5/4시간)</span></p>
+          <div class="small"><b>처방 문제</b> 1시간 20분이 걸렸을 때의 거리를 구하시오.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="problem">
+    <div class="in two">
+      <div>
+        <p class="kicker">왜 필요한가</p>
+        <h2>채점은 끝났는데,<br>수업 준비는 이제 시작입니다.</h2>
+        <p>학원 수업은 보통 밤 열 시쯤 끝납니다. 그때부터 강사는 숙제와 시험지를 다시 펼쳐, 학생마다 어디가 약하고 다음 시간에 무엇을 어떤 순서로 설명할지 정해야 합니다. 가장 오래 걸리는 일은 채점이 아니라 <b>틀린 원인을 찾는 일</b>입니다.</p>
+        <p>문제를 풀어 주거나 추천하는 학생용 AI는 많지만, 강사의 입장에서 학생들이 왜 틀렸는지 정리해 주는 도구는 찾기 어렵습니다.</p>
+      </div>
+      <div class="versus-mini">
+        <div class="vm-old"><span class="small muted">정답·오답만 보면</span><b>12번 · 6명 오답</b><span class="small">"활용 단원이 약함" → 6명 모두 같은 문제를 더 풉니다.</span></div>
+        <div class="vm-new"><span class="small muted">풀이 한 줄을 읽으면</span>
+          <div class="vm-row"><span class="tag C">개념</span><span class="hand">x/4 + x/6 = 1.15</span><span class="small muted">2명</span></div>
+          <div class="vm-row"><span class="tag K">계산</span><span class="hand">15 ÷ 5 = 5</span><span class="small muted">1명</span></div>
+          <div class="vm-row"><span class="tag R">오독</span><span class="hand">답 3시간</span><span class="small muted">1명</span></div>
+          <div class="vm-row"><span class="tag S">전략</span><span class="hand">4x + 6x = 5/4</span><span class="small muted">2명</span></div>
+          <span class="small"><b>같은 문제를 틀려도, 처방은 다르게.</b></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="in">
+      <p class="kicker">작동 방식</p>
+      <h2>사진 한 장에서 다음 수업 준비까지</h2>
+      <ol class="flow6">
+        <li><b>올리기</b><span>채점한 숙제·시험지·수업 중 푼 문제를 사진으로</span></li>
+        <li><b>풀이 읽기</b><span>학생이 쓴 풀이를 한 줄씩 판독</span></li>
+        <li class="key"><b>틀린 줄 찾기</b><span>앞 줄과 이어지지 않는 첫 줄</span></li>
+        <li class="key"><b>원인 진단</b><span>네 가지 원인 중 하나 + 근거·신뢰도</span></li>
+        <li><b>선생님 확인</b><span>확인하거나 고쳐서 최종 판단</span></li>
+        <li><b>결과</b><span>진찰 기록 · 오답 처방전 · 성장 차트</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band" id="causes">
+    <div class="in">
+      <p class="kicker">원인 네 가지</p>
+      <h2>틀린 이유가 다르면, 다음 수업도 달라집니다</h2>
+      <div class="causes">
+        <div class="cz"><span class="tag C">개념 부족</span><p>필요한 개념·공식이 없거나 잘못 알고 있다.</p><p class="ex">1시간 15분을 1.15시간으로 바꿈</p><p class="rx">개념부터 다시 짚기</p></div>
+        <div class="cz"><span class="tag K">계산 실수</span><p>식은 맞게 세웠지만 계산 과정에서 틀렸다.</p><p class="ex">5x = 15에서 x = 5</p><p class="rx">줄 바꿔 쓰고 검산하는 습관</p></div>
+        <div class="cz"><span class="tag R">문제 오독</span><p>풀이는 맞지만 묻는 것과 다른 것을 답했다.</p><p class="ex">가장 큰 수를 묻는데 가운데 수를 답함</p><p class="rx">구하는 것에 밑줄 긋기</p></div>
+        <div class="cz"><span class="tag S">풀이 전략 오류</span><p>상황을 식으로 옮기는 방향 자체가 틀렸다.</p><p class="ex">시간 대신 속력×거리를 더함</p><p class="rx">식 세우기 순서 카드로 연습</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="outputs">
+    <div class="in">
+      <p class="kicker">결과물</p>
+      <h2>병원 진료처럼, 학생마다 맞춤 처방</h2>
+      <p class="sub">풀이를 진찰해 원인을 찾고, 반 전체를 기록하고, 학생마다 처방을 내리고, 변화를 차트로 남깁니다.</p>
+      <div class="outs">
+        <div class="out"><b>진단서</b><span class="who">강사</span><p>학생·문항별 AI 진단. 틀린 줄, 원인, 근거, 신뢰도. 선생님이 확인하거나 수정해 최종 판단합니다.</p></div>
+        <div class="out"><b>진찰 기록</b><span class="who">강사</span><p>반 단위 요약. 문항별 오답 인원과 원인 분포, 다음 수업의 설명 순서, 주의가 필요한 학생.</p></div>
+        <div class="out"><b>오답 처방전</b><span class="who">학생</span><p>학생마다 틀린 줄, 원인, 같은 유형의 연습 문제를 한 장으로. 인쇄하거나 보내 줍니다.</p></div>
+        <div class="out soon"><b>월간 학습 성장 차트</b><span class="who">학부모</span><p>한 달 동안 쌓인 진단으로 원인별 오답 변화를 그래프로. <span class="muted">(준비 중)</span></p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="in two">
+      <div>
+        <p class="kicker">설계 원칙</p>
+        <h2>AI는 진단하고,<br>판단은 선생님이.</h2>
+      </div>
+      <ul class="principles">
+        <li><b>근거와 신뢰도를 함께</b> AI의 진단은 늘 "왜 그렇게 봤는지"와 신뢰도를 같이 보여 주는 제안입니다.</li>
+        <li><b>확인 전에는 내보내지 않음</b> 신뢰도가 낮은 진단은 따로 모아 보여 주고, 선생님이 확인하기 전에는 처방전이 나가지 않습니다.</li>
+        <li><b>사진은 남기지 않음</b> 풀이 사진은 진단에만 쓰고 서버에 저장하지 않습니다. 학생 이름은 가리고 찍습니다.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="video">
+    <div class="in">
+      <p class="kicker">소개 영상</p>
+      <h2>2분으로 보는 한 줄 진단</h2>
+      <video class="vid" controls preload="none" poster="assets/media/intro-poster.jpg" src="assets/media/intro.mp4"></video>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="in">
+      <h2>풀이 사진 한 장으로 시작해 보세요.</h2>
+      <p>샘플 반(중1 A반, 8명)이 미리 들어 있어, 바로 진찰 기록과 처방전을 둘러볼 수 있습니다.</p>
+      <a class="btn big light" href="app.html">선생님 화면 열기</a>
+    </div>
+  </section>
+</main>
+
+<footer class="lfoot">
+  <div class="in">
+    <span><b>한 줄 진단</b> · 학원 강사를 위한 수학 오답 진단 서비스 (프로토타입)</span>
+    <span>영어음성학응용 기말 프로젝트 · 2018320210 정윤지</span>
+  </div>
+</footer>
+</body>
+</html>

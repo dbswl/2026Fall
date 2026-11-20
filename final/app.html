@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>한 줄 진단 · 선생님 화면</title>
+<meta name="description" content="풀이 사진 한 장으로 학생이 처음 틀린 줄과 원인을 찾아 주는 학원 강사용 오답 진단 서비스">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Nanum+Pen+Script&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header style="gap:14px">
+    <div class="topbar">
+      <a class="brand" href="index.html" aria-label="한 줄 진단 소개 페이지로"><span class="mark">∿</span><b>한 줄 진단</b></a>
+      <div class="meta">
+        <span class="pill" id="classPill"></span>
+        <span class="status" id="aiStatus" title="AI 연결 상태">연결 확인 중</span>
+      </div>
+    </div>
+    <p class="muted small">채점한 풀이 사진을 올리면 학생이 처음 틀린 줄과 원인을 찾아 진단서를 만듭니다. 선생님이 확인한 진단은 진찰 기록과 오답 처방전에 바로 반영됩니다.</p>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs">
+    <button role="tab" id="t-dx" aria-selected="true" aria-controls="p-dx">새 진단</button>
+    <button role="tab" id="t-brief" aria-selected="false" aria-controls="p-brief">진찰 기록</button>
+    <button role="tab" id="t-stu" aria-selected="false" aria-controls="p-stu">오답 처방전</button>
+    <button role="tab" id="t-chk" aria-selected="false" aria-controls="p-chk">진단서 확인</button>
+  </div>
+
+  <section class="panel" id="p-dx" role="tabpanel" aria-labelledby="t-dx"></section>
+  <section class="panel" id="p-brief" role="tabpanel" aria-labelledby="t-brief" hidden></section>
+  <section class="panel" id="p-stu" role="tabpanel" aria-labelledby="t-stu" hidden></section>
+  <section class="panel" id="p-chk" role="tabpanel" aria-labelledby="t-chk" hidden></section>
+
+  <footer class="foot">
+    <span>한 줄 진단 프로토타입 · 샘플 반 데이터와 학생 이름(A~H)은 가상입니다. AI 진단은 제안이며 최종 판단은 선생님이 합니다.</span>
+    <button class="linkbtn" id="resetBtn" type="button">샘플 반으로 초기화</button>
+  </footer>
+</div>
+<dialog class="zoom" id="zoom"><img alt="풀이 사진 크게 보기"></dialog>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

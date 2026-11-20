@@ -175,7 +175,7 @@ textarea{min-height:76px;resize:vertical}
 .res-head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;justify-content:space-between}
 .res-grid{display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:16px}
 @media (max-width:620px){.res-grid{grid-template-columns:1fr}}
-.photo{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--soft);cursor:zoom-in}
+.photo{align-self:start;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--soft);cursor:zoom-in}
 .photo img{display:block;width:100%;max-height:420px;object-fit:contain}
 .paper .wl.pick{cursor:pointer}
 .paper .wl.pick:hover{background:var(--wrong-soft)}

@@ -65,6 +65,43 @@ const TOOL = {
   }
 };
 
+// 시험지 한 장 훑기: 문항을 모두 찾고 정답·오답을 먼저 가른다 (오답·애매한 문항만 자세히 진단)
+const SCAN_SYSTEM = `당신은 학원 수학 강사의 채점을 돕는 도우미입니다. 학생 한 명이 푼 시험지 한 쪽 사진을 받습니다.
+사진에서 어둡게 칠한 '개인정보 가림' 영역은 무시하세요. 반드시 submit_page 도구로만 답하세요.
+사진에 있는 모든 문항을 번호 순서대로 찾고, 문항마다 다음을 적습니다.
+- no: 인쇄된 문항 번호
+- region: 사진 전체를 0~1로 볼 때 그 문항(문제와 학생 풀이 전체)이 차지하는 직사각형, 넉넉하게
+- student_answer: 학생이 고른 보기 번호와 값, 또는 쓴 최종 답 (없으면 "무응답")
+- correct_answer: 직접 풀어 본 정답 (정답표가 주어지면 그 값)
+- verdict: 학생 답이 정답과 같으면 correct, 다르면 wrong, 답을 읽기 어렵거나 풀이가 확실하지 않으면 unsure
+  선생님의 채점 표시(빨간 동그라미·빗금·체크)는 참고만 하고, 판단은 답의 내용으로 합니다. 조금이라도 의심되면 unsure로 둡니다.
+- note: 판정 근거 한 문장`;
+const SCAN_TOOL = {
+  name: 'submit_page',
+  description: '시험지 한 쪽에서 찾은 문항 목록을 제출한다.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      questions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            no: { type: 'string' },
+            region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
+            student_answer: { type: 'string' },
+            correct_answer: { type: 'string' },
+            verdict: { type: 'string', enum: ['correct', 'wrong', 'unsure'] },
+            note: { type: 'string' }
+          },
+          required: ['no', 'student_answer', 'verdict']
+        }
+      }
+    },
+    required: ['questions']
+  }
+};
+
 function parseDataUrl(s) {
   const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/s.exec(s || '');
   return m ? { media_type: m[1], data: m[2] } : null;
@@ -114,15 +151,19 @@ module.exports = async function handler(req, res) {
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
   const img = parseDataUrl(body && body.image);
   const problem = String((body && body.problem) || '').slice(0, 2000);
+  const scan = !!(body && body.scan);
   const qno = String((body && body.question_no) || '').replace(/[^0-9A-Za-z가-힣\-]/g, '').slice(0, 10);
   const answer = String((body && body.answer) || '').slice(0, 300);
   if (!img) return res.status(400).json({ error: 'bad_image' });
   if (img.data.length > 6_000_000) return res.status(413).json({ error: 'image_too_large' });
-  if (!problem && !qno) return res.status(400).json({ error: 'no_problem' });
+  if (!problem && !qno && !scan) return res.status(400).json({ error: 'no_problem' });
+  const rg = body && body.region;
+  const where = rg && [rg.x, rg.y, rg.w, rg.h].every(v => typeof v === 'number' && isFinite(v))
+    ? `\n참고: 이 문항은 사진 전체를 0~1로 볼 때 대략 x=${rg.x.toFixed(2)}, y=${rg.y.toFixed(2)}, 너비 ${rg.w.toFixed(2)}, 높이 ${rg.h.toFixed(2)} 영역에 있습니다.` : '';
 
   const ansText = `정답: ${answer || '(주어지지 않음: 직접 풀어서 판단)'}`;
   const userText = qno && !problem
-    ? `시험지 사진에서 ${qno}번 문항을 찾아, 문제를 사진에서 읽고 그 문항의 학생 풀이만 진단해 주세요.\n${ansText}`
+    ? `시험지 사진에서 ${qno}번 문항을 찾아, 문제를 사진에서 읽고 그 문항의 학생 풀이만 진단해 주세요.\n${ansText}${where}`
     : `문제: ${problem}\n${ansText}\n\n사진 속 학생의 풀이를 진단해 주세요.`;
 
   try {
@@ -135,15 +176,15 @@ module.exports = async function handler(req, res) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2500,
-        system: SYSTEM,
-        tools: [TOOL],
+        max_tokens: scan ? 3000 : 2500,
+        system: scan ? SCAN_SYSTEM : SYSTEM,
+        tools: [scan ? SCAN_TOOL : TOOL],
         tool_choice: { type: 'auto' },
         messages: [{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
-            { type: 'text', text: userText }
+            { type: 'text', text: scan ? `이 시험지 사진의 문항을 모두 찾아 주세요.${answer ? '\n정답표: ' + answer : ''}` : userText }
           ]
         }]
       })
@@ -153,13 +194,17 @@ module.exports = async function handler(req, res) {
       const msg = (j && j.error && j.error.message) || `HTTP ${r.status}`;
       return res.status(502).json({ error: 'upstream', status: r.status, message: msg });
     }
-    const block = (j.content || []).find(b => b.type === 'tool_use' && b.name === 'submit_diagnosis');
+    const block = (j.content || []).find(b => b.type === 'tool_use' && b.name === (scan ? 'submit_page' : 'submit_diagnosis'));
     let result = block ? block.input : null;
     if (!result) {
       // 도구 대신 글로 답한 경우: 본문에서 JSON을 찾아 읽는다
       const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
       const m = text.match(/\{[\s\S]*\}/);
       if (m) { try { result = JSON.parse(m[0]); } catch (e) { result = null; } }
+    }
+    if (scan) {
+      if (!result || !Array.isArray(result.questions)) return res.status(502).json({ error: 'no_result' });
+      return res.status(200).json({ ok: true, model: j.model || MODEL, result, usage: j.usage || null });
     }
     if (result && result.question_found === false) return res.status(422).json({ error: 'question_not_found', message: `${qno}번 문항을 사진에서 찾지 못했습니다` });
     if (!result || !Array.isArray(result.transcribed_lines)) return res.status(502).json({ error: 'no_result' });

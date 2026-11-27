@@ -50,7 +50,7 @@ function save() {
 const ui = {
   tab: 'dx', stu: 'A', showAll: false,
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
-  dx: { qid: 12, s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '' }, newName: '' },
+  dx: { qid: 12, s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '', same: true }, newName: '' },
   queue: [], sel: null, pickLine: false, running: false,
   redact: lsGet(STORE + '.redact') !== '0',   // 개인정보 자동 가리기 (기본 켬)
   edit: null                                   // 가림 편집 중인 사진
@@ -59,8 +59,8 @@ const ui = {
 const allQs = () => D.questions.concat(S.custom);
 const qOf = id => allQs().find(q => String(q.id) === String(id));
 const N = () => S.students.length;
-const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : q.sheet ? `${q.exam} 시험지` : '직접 입력한 문항';
-const qNo = q => q.unit ? q.id + '번' : q.sheet ? q.no + '번' : '직접 입력';     // 짧은 문항 표시
+const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : q.sheet ? (/시험|평가|고사/.test(q.exam) ? q.exam : `${q.exam} 시험지`) : '직접 입력한 문항';
+const qNo = q => q.unit ? q.id + '번' : q.sheet ? (q.no === '전체' ? '문항 찾기' : q.no + '번') : '직접 입력';     // 짧은 문항 표시
 const qHead = q => q.unit ? q.id : q.sheet ? q.no : '직';                         // 채점표 머리
 const causeTag = k => k && D.causes[k] ? `<span class="tag ${k}">${D.causes[k].short}</span>` : '';
 const topNames = a => a.map(k => D.causes[k].name).join(' · ');
@@ -149,6 +149,7 @@ function resize(img, max, q) {
   return c.toDataURL('image/jpeg', q);
 }
 let seq = 0;
+function baseStudent() { return ui.dx.s === '__new' ? (ui.dx.newName.trim() || S.students[0]) : ui.dx.s; }
 function nextStudent(qid) {
   // 기본 학생에서 시작해, 같은 문항에 아직 배정되지 않은 다음 학생을 고른다
   const base = ui.dx.s === '__new' ? (ui.dx.newName.trim() || S.students[0]) : ui.dx.s;
@@ -167,8 +168,7 @@ async function takeFiles(files) {
   let sheet = null;
   if (qid === 'sheet') {
     sheet = sheetSpec();
-    if (!sheet.nos.length) { toast('진단할 문항 번호를 먼저 적어 주세요 (예: 9, 12, 13)'); return; }
-    if (ui.queue.length + imgs.length * sheet.nos.length > 60) { toast('한 번에 60문항까지 진단할 수 있어요'); return; }
+    if (ui.queue.length + imgs.length * Math.max(1, sheet.nos.length) > 60) { toast('한 번에 60문항까지 진단할 수 있어요'); return; }
   }
   for (const f of imgs) {
     try {
@@ -177,15 +177,22 @@ async function takeFiles(files) {
       const a = ui.redact && window.Redact ? Redact.analyze(img) : { rot: 0, masks: [] };
       const it = { id: 'p' + (++seq), name: f.name, img, rot: a.rot, masks: a.masks, auto: a.masks.length,
         qid, q: qid === 'new' ? { text: ui.dx.custom.text.trim(), ans: ui.dx.custom.ans.trim() } : null,
-        s: nextStudent(sheet ? sheetQid(sheet.exam, sheet.nos[0]) : qid), status: 'wait', cur: null, saved: false };
+        s: sheet && ui.dx.sheet.same ? baseStudent() : nextStudent(sheet ? (sheet.nos.length ? sheetQid(sheet.exam, sheet.nos[0]) : 'scan:' + sheet.exam) : qid), status: 'wait', cur: null, saved: false };
       paint(it);
+      if (sheet && !sheet.nos.length) {
+        it.grp = it.id; it.scan = true; it.qid = 'scan:' + sheet.exam; it.q = null;
+        it.sheet = { exam: sheet.exam, no: '전체', key: sheet.key, keyText: sheet.keyText, text: '' };
+        ui.queue.push(it);
+        if (!ui.sel) ui.sel = it.id;
+        continue;
+      }
       if (sheet) {
         // 같은 사진을 문항 번호마다 나눠 진단한다 (가림·학생은 사진 단위로 함께 바뀜)
         it.grp = it.id;
         sheet.nos.forEach((no, k) => {
           const x = k ? { ...it, id: 'p' + (++seq) } : it;
           x.qid = sheetQid(sheet.exam, no); x.q = null;
-          x.sheet = { exam: sheet.exam, no, ans: sheet.ans[k] || '', text: '' };
+          x.sheet = { exam: sheet.exam, no, ans: sheet.key[no] || '', text: '' };
           ui.queue.push(x);
           if (!ui.sel) ui.sel = x.id;
         });
@@ -200,8 +207,11 @@ async function takeFiles(files) {
 function sheetSpec() {
   const exam = (ui.dx.sheet.exam || '').trim() || '시험지';
   const nos = [...new Set((ui.dx.sheet.nos.match(/\d+/g) || []).map(n => String(+n)).filter(n => +n > 0 && +n < 200))];
-  const ans = (ui.dx.sheet.ans || '').split(/[,，\/]|\s{2,}/).map(x => x.trim());
-  return { exam, nos, ans };
+  const raw = (ui.dx.sheet.ans || '').trim();
+  const parts = raw ? raw.split(/[,，\/]|\s{2,}/).map(x => x.trim()).filter(Boolean) : [];
+  const key = {};
+  parts.forEach((x, k) => { const m = /^(\d+)\s*[:：=)]\s*(.+)$/.exec(x); if (m) key[String(+m[1])] = m[2].trim(); else if (nos[k]) key[nos[k]] = x; });
+  return { exam, nos, key, keyText: Object.entries(key).map(([n, a]) => n + ':' + a).join(', ') };
 }
 function padBox(g, p) {
   const x = Math.max(0, g.x - p), y = Math.max(0, g.y - p);
@@ -283,6 +293,7 @@ function drawEditor(temp) {
 
 // ---------- 진단 ----------
 function problemOf(it) {
+  if (it.scan) return { id: it.qid, sheet: true, exam: it.sheet.exam, no: '전체', text: '', ans: '', topic: `${it.sheet.exam} 전체`, unit: 0 };
   if (it.sheet) {
     const saved = qOf(it.qid);
     return { id: it.qid, sheet: true, exam: it.sheet.exam, no: it.sheet.no,
@@ -314,14 +325,14 @@ function demoResult(q, s) {
 
 async function diagnoseItem(it) {
   const q = problemOf(it);
-  it.status = 'run'; it.cur = null; it.saved = false; it.errMsg = ''; it.region = null; it.regionShot = null;
+  it.status = 'run'; it.cur = null; it.saved = false; it.errMsg = ''; it.region = null; it.regionShot = null; it.quick = false;
   let result = null, mode = 'ai', note = '';
   try {
     if (!aiOn()) throw Object.assign(new Error('demo'), { demo: true });
     const r = await fetch('api/diagnose', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-access-code': ui.code || '' },
       body: JSON.stringify(it.sheet
-        ? { image: it.photo, question_no: it.sheet.no, answer: q.ans, topic: q.topic }
+        ? { image: it.photo, question_no: it.sheet.no, answer: q.ans, topic: q.topic, region: it.hint || null }
         : { image: it.photo, problem: plain(q.text), answer: q.ans, topic: q.topic })
     });
     const j = await r.json().catch(() => ({}));
@@ -340,10 +351,47 @@ async function diagnoseItem(it) {
     if (!it.sheet.ans && result.correct_answer) { it.sheet.aiAns = String(result.correct_answer); }
     const g = result.question_region, ok = v => typeof v === 'number' && isFinite(v);
     it.region = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 && g.w <= 1.01 && g.h <= 1.01
-      ? padBox(g, 0.04) : null;
+      ? padBox(g, 0.04) : (it.hint || null);
   }
   it.cur = toCurrent(result, problemOf(it), it, mode, note);
   it.status = 'done';
+}
+
+// 시험지 한 장 훑기: 문항을 찾아 정답은 바로 표시하고, 오답·애매한 문항은 진단 대기열에 넣는다
+async function scanItem(it, todo) {
+  it.status = 'run'; it.errMsg = '';
+  if (!aiOn()) { it.status = 'err'; it.errMsg = '시험지 전체에서 문항을 찾는 기능은 실제 AI가 연결되어 있을 때만 됩니다 (체험 코드 필요).'; return; }
+  let j = {}, r;
+  try {
+    r = await fetch('api/diagnose', { method: 'POST', headers: { 'content-type': 'application/json', 'x-access-code': ui.code || '' },
+      body: JSON.stringify({ image: it.photo, scan: true, answer: it.sheet.keyText || '' }) });
+    j = await r.json().catch(() => ({}));
+  } catch (e) { it.status = 'err'; it.errMsg = '문항을 찾지 못했습니다 (' + e.message + ')'; return; }
+  if (r.status === 401) ui.codeOk = false;
+  const qs = r.ok && j.result && Array.isArray(j.result.questions) ? j.result.questions : null;
+  if (!qs || !qs.length) { it.status = 'err'; it.errMsg = qs ? '사진에서 문항을 찾지 못했습니다.' : '문항을 찾지 못했습니다 (' + (j.message || j.error || 'HTTP ' + r.status) + ')'; return; }
+  const ok = v => typeof v === 'number' && isFinite(v);
+  const seen = new Set();
+  const made = qs.map(q => ({ ...q, no: String(q.no || '').replace(/[^0-9]/g, '') }))
+    .filter(q => q.no && !seen.has(q.no) && seen.add(q.no))
+    .sort((a, b) => a.no - b.no)
+    .map(q => {
+      const g = q.region;
+      const hint = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 ? padBox(g, 0.03) : null;
+      const x = { id: 'p' + (++seq), name: it.name, img: it.img, rot: it.rot, masks: it.masks, photo: it.photo, thumb: it.thumb, grp: it.grp,
+        s: it.s, qid: sheetQid(it.sheet.exam, q.no), q: null, hint, region: hint, saved: false, cur: null,
+        sheet: { exam: it.sheet.exam, no: q.no, ans: (it.sheet.key || {})[q.no] || '', aiAns: q.correct_answer || '', text: '' } };
+      if (q.verdict === 'correct') {
+        // 빠른 판정: 자세한 진단 없이 정답으로 표시 (선생님이 '다시 진단'으로 자세히 볼 수 있음)
+        x.status = 'done'; x.quick = true;
+        x.cur = toCurrent({ transcribed_lines: [], student_answer: q.student_answer || '', is_correct: true, first_error_line: -1, cause: 'none',
+          evidence: q.note || '', confidence: 0.9, legibility: 'good', teacher_note: '', similar_problem: null }, problemOf(x), x, 'ai', '');
+      } else { x.status = 'wait'; x.scanNote = q.note || ''; todo.push(x); }
+      return x;
+    });
+  const at = ui.queue.indexOf(it);
+  ui.queue.splice(at, 1, ...made);
+  if (ui.sel === it.id) ui.sel = (made.find(x => x.status === 'wait') || made[0]).id;
 }
 
 async function runAll(items) {
@@ -357,11 +405,13 @@ async function runAll(items) {
     if (!String(it.s || '').trim()) { toast('학생을 모두 정해 주세요'); return; }
   }
   ui.running = true; ui.pickLine = false; renderDx();
-  let i = 0;
+  let i = 0, scanning = 0;
   const worker = async () => {
-    while (i < todo.length) {
+    while (i < todo.length || scanning) {
+      if (i >= todo.length) { await new Promise(res => setTimeout(res, 200)); continue; }
       const it = todo[i++];
       renderDx();
+      if (it.scan) { scanning++; try { await scanItem(it, todo); } catch (e) { it.status = 'err'; it.errMsg = String(e.message || e); } scanning--; renderDx(); continue; }
       try { await diagnoseItem(it); } catch (e) { it.status = 'err'; }
       if (!ui.sel || !selItem() || selItem().status !== 'done') ui.sel = it.id;
       renderDx();
@@ -470,7 +520,7 @@ function renderDxForm() {
   const q = ui.dx.qid === 'new' || ui.dx.qid === 'sheet' ? null : qOf(ui.dx.qid);
   const sh = ui.dx.sheet;
   const qOpts = D.questions.map(x => `<option value="${x.id}"${String(x.id) === String(ui.dx.qid) ? ' selected' : ''}>${x.id}번 · ${esc(x.topic)}</option>`).join('') +
-    `<option value="sheet"${ui.dx.qid === 'sheet' ? ' selected' : ''}>+ 시험지 한 장에서 번호로 고르기</option>` +
+    `<option value="sheet"${ui.dx.qid === 'sheet' ? ' selected' : ''}>+ 시험지 사진 (문항 자동으로 찾기)</option>` +
     `<option value="new"${ui.dx.qid === 'new' ? ' selected' : ''}>+ 다른 문제 직접 입력</option>`;
   const sOpts = S.students.map(x => `<option value="${esc(x)}"${x === ui.dx.s ? ' selected' : ''}>학생 ${esc(x)}</option>`).join('') +
     `<option value="__new"${ui.dx.s === '__new' ? ' selected' : ''}>+ 새 학생</option>`;
@@ -483,9 +533,10 @@ function renderDxForm() {
       <select id="qsel"${ui.running ? ' disabled' : ''}>${qOpts}</select>
       ${q ? `<div class="probbox">${q.text}<div class="a">정답 ${esc(q.ans)} · ${unitLabel(q)}</div></div>` :
         ui.dx.qid === 'sheet' ? `<input type="text" id="sexam" placeholder="시험 이름 (선택, 예: 3분기 진단평가)" value="${esc(sh.exam)}">
-         <input type="text" id="snos" placeholder="진단할 문항 번호 (예: 9, 12, 13)" value="${esc(sh.nos)}" inputmode="numeric">
-         <input type="text" id="sans" placeholder="정답 (선택, 번호 순서대로 예: -4, 6, ③)" value="${esc(sh.ans)}">
-         <span class="privacy">시험지 한 장을 통째로 찍어 올리면, AI가 사진에서 그 번호의 문제를 읽고 학생 풀이를 진단합니다. 정답을 비워 두면 AI가 직접 풀어 채점합니다.</span>` :
+         <input type="text" id="snos" placeholder="문항 번호 (비워 두면 사진의 문항을 모두 찾음)" value="${esc(sh.nos)}" inputmode="numeric">
+         <input type="text" id="sans" placeholder="정답표 (선택, 예: 9:③, 12:⑤)" value="${esc(sh.ans)}">
+         <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}> 여러 장을 올리면 한 학생의 여러 쪽으로 보기</label>
+         <span class="privacy">시험지를 쪽마다 통째로 찍어 올리면, AI가 문항을 모두 찾아 정답·오답을 가르고 틀렸거나 애매한 문항만 자세히 진단합니다. 정답표가 없으면 AI가 직접 풀어 채점합니다.</span>` :
         `<textarea id="ctext" placeholder="문제를 입력하세요">${esc(ui.dx.custom.text)}</textarea>
          <input type="text" id="cans" placeholder="정답 (모르면 비워 두세요)" value="${esc(ui.dx.custom.ans)}">`}
     </div>
@@ -501,7 +552,7 @@ function renderDxForm() {
       <label class="toggle"><input type="checkbox" id="redact"${ui.redact ? ' checked' : ''}> 학원 이름·로고·학생 이름 자동으로 가리기</label>
     </div>
     ${qn ? queueHtml() : ''}
-    <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : waiting > 1 ? `${waiting}장 모두 진단하기` : '진단하기'}</button>
+    <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : waiting > 1 ? `${waiting}건 모두 진단하기` : '진단하기'}</button>
     <p class="privacy">${ui.redact ? '시험지 머리글(학원 로고·시험 이름·학생 이름)과 바닥글은 이 기기에서 먼저 가린 뒤 전송합니다. ' : ''}사진은 진단에만 쓰이고 서버에 저장되지 않습니다.</p>`;
 }
 function queueHtml() {
@@ -509,11 +560,11 @@ function queueHtml() {
   const rows = ui.queue.map(it => {
     const q = problemOf(it);
     let st;
-    if (it.status === 'wait') st = '<span class="qst">대기</span>';
-    else if (it.status === 'run') st = '<span class="qst run">진단 중</span>';
+    if (it.status === 'wait') st = `<span class="qst">${it.scan ? '문항 찾기 대기' : '대기'}</span>`;
+    else if (it.status === 'run') st = `<span class="qst run">${it.scan ? '문항 찾는 중' : '진단 중'}</span>`;
     else if (it.status === 'err') st = `<span class="qst bad" title="${esc(it.errMsg || '')}">${it.errMsg ? '못 찾음' : '실패'}</span>`;
     else if (it.saved) st = '<span class="qst ok">✓ 반영</span>';
-    else if (it.cur.correct) st = '<span class="qst ok">정답</span>';
+    else if (it.cur.correct) st = `<span class="qst ok">정답${it.quick ? '(빠른)' : ''}</span>`;
     else st = `${causeTag(it.cur.rec.cause)}${it.cur.rec.conf < LOW ? '<span class="qst bad">확인</span>' : ''}`;
     return `<div class="qrow2${it.id === ui.sel ? ' on' : ''}" data-sel-item="${it.id}">
       <img src="${it.thumb}" alt="">
@@ -574,14 +625,15 @@ function resultCard(it) {
   if (it.region && !it.regionShot) it.regionShot = cropShot(it);
   const photo = `<div class="photo" data-zoom-item="${it.id}" title="눌러서 사진 전체 보기"><img src="${it.region ? it.regionShot : it.photo}" alt="학생 풀이 사진">${it.region ? '<span class="cropnote">문항 부분 · 눌러서 전체 보기</span>' : ''}</div>`;
   const ansShown = q.ans || (it.sheet && it.sheet.aiAns ? it.sheet.aiAns + ' (AI가 푼 값)' : '-');
-  const readProb = it.sheet ? `<div class="probbox small"><b>AI가 사진에서 읽은 ${esc(it.sheet.no)}번 문제</b><br>${q.text || '(읽지 못함)'}<div class="a">다른 문항을 읽었다면 "다시 진단"을 눌러 주세요.</div></div>` : '';
+  const readProb = it.sheet && !it.quick ? `<div class="probbox small"><b>AI가 사진에서 읽은 ${esc(it.sheet.no)}번 문제</b><br>${q.text || '(읽지 못함)'}<div class="a">다른 문항을 읽었다면 "다시 진단"을 눌러 주세요.</div></div>` : '';
   const nav = ui.queue.length > 1 ? `<button class="btn ghost" data-act="prev">이전</button><button class="btn ghost" data-act="next">다음</button>` : '';
 
   if (cur.correct) {
     return `<div class="card">${head}${notes}${readProb}
       <div class="res-grid">${photo}<div class="side" style="display:flex;flex-direction:column;gap:10px">
-        ${workBox({ work: r.work, err: null })}
-        <div class="good"><b style="color:var(--ok)">정답 풀이입니다.</b><div class="small">쓴 답 ${esc(r.given)} · 정답 ${esc(ansShown)}</div></div>
+        ${it.quick ? '' : workBox({ work: r.work, err: null })}
+        <div class="good"><b style="color:var(--ok)">${it.quick ? '정답으로 판정했습니다 (빠른 판정).' : '정답 풀이입니다.'}</b><div class="small">쓴 답 ${esc(r.given)} · 정답 ${esc(ansShown)}</div>
+        ${it.quick ? `<div class="small muted" style="margin-top:4px">${esc(r.why)} 풀이를 줄 단위로 보려면 "다시 진단"을 누르세요.</div>` : ''}</div>
       </div></div>
       <div class="actions">${it.saved ? '<span class="done">✓ 정답으로 기록했어요</span>' : '<button class="btn ok" data-act="confirm">정답으로 기록</button>'}
         <button class="btn ghost" data-act="again">다시 진단</button>${nav}</div></div>`;
@@ -855,6 +907,7 @@ document.addEventListener('change', e => {
   if (e.target.id === 'qsel') { ui.dx.qid = ['new', 'sheet'].includes(e.target.value) ? e.target.value : +e.target.value; renderDxForm(); return; }
   if (e.target.id === 'ssel') { ui.dx.s = e.target.value; renderDxForm(); return; }
   if (e.target.id === 'file') { takeFiles(e.target.files); e.target.value = ''; return; }
+  if (e.target.id === 'ssame') { ui.dx.sheet.same = e.target.checked; return; }
   if (e.target.id === 'redact') { ui.redact = e.target.checked; lsSet(STORE + '.redact', ui.redact ? '1' : '0'); renderDxForm(); return; }
   if (e.target.dataset.itemS) { const it = ui.queue.find(x => x.id === e.target.dataset.itemS); if (it) { group(it).forEach(x => { if (!x.saved) { x.s = e.target.value; if (x.cur) x.cur.rec.s = x.s; } }); renderDx(); } return; }
   if (e.target.dataset.act === 'cause') { const it = selItem(); if (it && it.cur) { it.cur.rec.cause = e.target.value; renderDxOut(); renderDxForm(); } return; }

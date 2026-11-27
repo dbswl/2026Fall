@@ -655,7 +655,7 @@ function renderDxForm() {
     </details>
     ${qn ? queueHtml() : ''}
     <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : ui.queue.some(it => !it.reviewed) ? '가림 확인하고 진단하기' : waiting > 1 ? `${waiting}건 모두 진단하기` : '진단하기'}</button>
-    <p class="privacy">${ui.redact ? '시험지 머리글(학원 로고·시험 이름·학생 이름)과 바닥글은 이 기기에서 먼저 가린 뒤 전송합니다. ' : ''}사진은 진단에만 쓰이고 서버에 저장되지 않습니다.</p>`;
+    <p class="privacy">사진은 진단에만 쓰이고 저장되지 않습니다.</p>`;
 }
 function qHeadline() {
   const photos = new Set(ui.queue.map(it => it.grp || it.id)).size;

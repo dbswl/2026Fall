@@ -259,3 +259,4 @@ details.opt summary{cursor:pointer;color:var(--muted)} details.opt[open]{display
 .pager .pg{font:inherit;font-size:.84rem;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:6px 12px;color:var(--accent);cursor:pointer;white-space:nowrap}
 .pager .pg:hover{border-color:var(--accent)}
 .done-card{border-color:var(--ok)} .done-card h2{color:var(--ok)}
+.qwho{font-size:.88rem}

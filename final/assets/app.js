@@ -72,7 +72,7 @@ const ui = {
   tab: 'dx', stu: 'A', showAll: false, onboard: false,
   newG: { name: '', count: 8, names: [], custom: false },     // 새 반 만들기 입력
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
-  dx: { qid: 'sheet', s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '', same: true }, newName: '' },
+  dx: { qid: 'sheet', s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '' }, newName: '' },
   queue: [], sel: null, pickLine: false, running: false,
   redact: lsGet(STORE + '.redact') !== '0',   // 개인정보 자동 가리기 (기본 켬)
   edit: null                                   // 가림 편집 중인 사진
@@ -173,15 +173,6 @@ function resize(img, max, q) {
 }
 let seq = 0;
 function baseStudent() { return ui.dx.s === '__new' ? (ui.dx.newName.trim() || S.students[0]) : ui.dx.s; }
-function nextStudent(qid) {
-  // 기본 학생에서 시작해, 같은 문항에 아직 배정되지 않은 다음 학생을 고른다
-  const base = ui.dx.s === '__new' ? (ui.dx.newName.trim() || S.students[0]) : ui.dx.s;
-  const list = S.students.includes(base) ? S.students : [base].concat(S.students);
-  const start = Math.max(0, list.indexOf(base));
-  const used = ui.queue.filter(it => String(it.qid) === String(qid) && !it.saved).map(it => it.s);
-  for (let i = 0; i < list.length; i++) { const s = list[(start + i) % list.length]; if (!used.includes(s)) return s; }
-  return base;
-}
 async function takeFiles(files) {
   const imgs = [...(files || [])].filter(f => /^image\//.test(f.type)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (!imgs.length) { toast('이미지 파일을 올려 주세요'); return; }
@@ -200,7 +191,7 @@ async function takeFiles(files) {
       const a = ui.redact && window.Redact ? Redact.analyze(img) : { rot: 0, masks: [] };
       const it = { id: 'p' + (++seq), name: f.name, img, rot: a.rot, masks: a.masks, auto: a.masks.length,
         qid, q: qid === 'new' ? { text: ui.dx.custom.text.trim(), ans: ui.dx.custom.ans.trim() } : null,
-        reviewed: false, s: sheet && ui.dx.sheet.same ? baseStudent() : nextStudent(sheet ? (sheet.nos.length ? sheetQid(sheet.exam, sheet.nos[0]) : 'scan:' + sheet.exam) : qid), status: 'wait', cur: null, saved: false };
+        reviewed: false, s: baseStudent(), status: 'wait', cur: null, saved: false };
       paint(it);
       if (sheet && !sheet.nos.length) {
         it.grp = it.id; it.scan = true; it.qid = 'scan:' + sheet.exam; it.q = null;
@@ -649,7 +640,7 @@ function renderDxForm() {
     <div class="field"><label for="ssel"><span class="stepno">1</span>학생</label>
       <select id="ssel">${sOpts}</select>
       ${ui.dx.s === '__new' ? `<input type="text" id="sname" placeholder="학생 이름 (예: 학생 I, 지민)" value="${esc(ui.dx.newName)}">` : ''}
-      <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}><span>여러 장은 이 학생의 여러 쪽 <span class="muted">(끄면 학생을 차례로 배정)</span></span></label>
+      <span class="privacy">이 학생의 시험지를 올립니다. 다른 학생의 시험지는 학생을 바꾼 뒤 올려 주세요.</span>
     </div>
     <div class="field"><span class="lab"><span class="stepno">2</span>시험지 사진</span>
       <label class="drop" id="drop">
@@ -673,7 +664,6 @@ function qHeadline() {
   return `올린 사진 ${photos}장` + (qs && qs !== photos ? ` · 문항 ${qs}개` : '');
 }
 function queueHtml() {
-  const stOpts = cur => S.students.map(x => `<option value="${esc(x)}"${x === cur ? ' selected' : ''}>${esc(x)}</option>`).join('') + (S.students.includes(cur) ? '' : `<option selected>${esc(cur)}</option>`);
   const rows = ui.queue.map(it => {
     const q = problemOf(it);
     let st;
@@ -685,7 +675,7 @@ function queueHtml() {
     else st = `${causeTag(it.cur.rec.cause)}${it.cur.rec.conf < LOW ? '<span class="qst bad">확인</span>' : ''}`;
     return `<div class="qrow2${it.id === ui.sel ? ' on' : ''}" data-sel-item="${it.id}">
       <img src="${it.thumb}" alt="">
-      <div class="qmeta"><select data-item-s="${it.id}" aria-label="학생"${it.status === 'run' || it.saved ? ' disabled' : ''}>${stOpts(it.s)}</select>
+      <div class="qmeta"><b class="qwho">${esc(it.s)}</b>
         <span class="small muted">${q ? qNo(q) : '직접 입력'}</span>
         ${it.reviewed ? '' : '<span class="small low">가림 확인 전</span>'}</div>
       <div class="qstate">${st}</div>
@@ -1176,7 +1166,6 @@ document.addEventListener('change', e => {
   if (e.target.id === 'qsel') { ui.dx.qid = ['new', 'sheet'].includes(e.target.value) ? e.target.value : +e.target.value; renderDxForm(); return; }
   if (e.target.id === 'ssel') { ui.dx.s = e.target.value; renderDxForm(); return; }
   if (e.target.id === 'file') { takeFiles(e.target.files); e.target.value = ''; return; }
-  if (e.target.id === 'ssame') { ui.dx.sheet.same = e.target.checked; return; }
   if (e.target.id === 'redact') { ui.redact = e.target.checked; lsSet(STORE + '.redact', ui.redact ? '1' : '0'); renderDxForm(); return; }
   if (e.target.dataset.itemS) { const it = ui.queue.find(x => x.id === e.target.dataset.itemS); if (it) { group(it).forEach(x => { if (!x.saved) { x.s = e.target.value; if (x.cur) x.cur.rec.s = x.s; } }); renderDx(); } return; }
   if (e.target.dataset.act === 'cause') { const it = selItem(); if (it && it.cur) { it.cur.rec.cause = e.target.value; renderDxOut(); renderDxForm(); } return; }

@@ -28,7 +28,7 @@ async def main():
         await pg.route('https://fonts.googleapis.com/**', lambda r: r.abort()); await pg.route('**/api/diagnose', handle)
         await pg.goto(BASE + '/app.html'); await pg.evaluate('localStorage.clear()'); await pg.reload(); await pg.wait_for_timeout(800)
         await pg.fill('#gName', '테스트 반'); await pg.click('#gCreate'); await pg.wait_for_timeout(300)
-        await pg.click('#t-dx'); await pg.select_option('#ssel', 'C')
+        await pg.click('#t-dx'); await pg.select_option('#ssel', '학생 C')
         await pg.click('details.opt summary'); await pg.fill('#sans', '9:③')
         await pg.set_input_files('#file', ['dev/real/p2.png', 'dev/real/p3.png']); await pg.wait_for_timeout(1000)
         print('before:', [t.replace('\n', ' ') for t in await pg.locator('.qrow2').all_inner_texts()])

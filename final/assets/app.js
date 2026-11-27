@@ -19,7 +19,8 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch
 // ---------- 상태: 반(그룹) ----------
 // 기록은 반마다 따로 둔다. 처음에는 반이 없고, 선생님이 반 이름과 학생 수를 정해 만든다.
 const DBKEY = 'handline.groups';
-const autoName = i => i < 26 ? String.fromCharCode(65 + i) : String.fromCharCode(65 + Math.floor(i / 26) - 1) + String.fromCharCode(65 + i % 26);
+const letter = i => i < 26 ? String.fromCharCode(65 + i) : String.fromCharCode(65 + Math.floor(i / 26) - 1) + String.fromCharCode(65 + i % 26);
+const autoName = i => '학생 ' + letter(i);
 function emptyGroup(name, students) {
   const graded = {}; students.forEach(x => { graded[x] = []; });
   return { id: 'g' + Date.now().toString(36), name, students: students.slice(), recs: [], custom: [], graded, session: [] };
@@ -27,14 +28,27 @@ function emptyGroup(name, students) {
 function sampleGroup() {
   // 둘러보기용 샘플 반 (가상의 학생 8명, 16문항 숙제)
   const graded = {};
-  D.students.forEach(x => { graded[x] = D.questions.map(q => String(q.id)); });
-  return { id: 'g' + Date.now().toString(36), name: `샘플 반 (${D.exam.cls})`, sample: true, students: D.students.slice(),
-    recs: D.records.map((r, i) => ({ ...r, id: 's' + i, confirmed: false, byTeacher: false, src: 'sample' })), custom: [], graded, session: [] };
+  const nm = x => '학생 ' + x;
+  D.students.forEach(x => { graded[nm(x)] = D.questions.map(q => String(q.id)); });
+  return { id: 'g' + Date.now().toString(36), name: `샘플 반 (${D.exam.cls})`, sample: true, students: D.students.map(nm),
+    recs: D.records.map((r, i) => ({ ...r, s: nm(r.s), id: 's' + i, confirmed: false, byTeacher: false, src: 'sample' })), custom: [], graded, session: [] };
 }
 function loadDB() {
   try {
     const j = JSON.parse(lsGet(DBKEY) || 'null');
-    if (j && Array.isArray(j.groups)) return j;
+    if (j && Array.isArray(j.groups)) {
+      // 이전에 만든 반: 알파벳만 있는 이름은 '학생 A'로 바꿔 둔다
+      j.groups.forEach(g => { (g.custom || []).forEach(q => { q.topic = clip(q.topic, 40) || q.topic; if (q.unitName) q.unitName = clip(q.unitName, 30); }); });
+      j.groups.forEach(g => {
+        const map = {}; g.students.forEach(x => { if (/^[A-Z]{1,2}$/.test(x)) map[x] = '학생 ' + x; });
+        if (!Object.keys(map).length) return;
+        const ren = x => map[x] || x;
+        g.students = g.students.map(ren);
+        g.recs.forEach(r => { r.s = ren(r.s); }); g.session.forEach(x => { x.s = ren(x.s); });
+        const gr = {}; Object.keys(g.graded || {}).forEach(k => { gr[ren(k)] = g.graded[k]; }); g.graded = gr;
+      });
+      return j;
+    }
   } catch (e) { }
   return { cur: null, groups: [] };
 }
@@ -224,6 +238,7 @@ function sheetSpec() {
   parts.forEach((x, k) => { const m = /^(\d+)\s*[:：=)]\s*(.+)$/.exec(x); if (m) key[String(+m[1])] = m[2].trim(); else if (nos[k]) key[nos[k]] = x; });
   return { exam, nos, key, keyText: Object.entries(key).map(([n, a]) => n + ':' + a).join(', ') };
 }
+function clip(v, n) { return String(v || '').split(/<\/?(?:parameter|invoke)\b|<\/[a-z_]+>/i)[0].replace(/<\/?[a-zA-Z_][\w-]*(?:\s+[\w-]+="[^"]*")*\s*\/?>/g, '').trim().slice(0, n); }  // AI 답에 섞인 태그 조각 잘라 내기
 function padBox(g, p) {
   const x = Math.max(0, g.x - p), y = Math.max(0, g.y - p);
   return { x, y, w: Math.min(1 - x, g.w + 2 * p), h: Math.min(1 - y, g.h + 2 * p) };
@@ -253,7 +268,7 @@ async function postDiagnose(body) {
     } catch (e) {
       const sec = Math.round((Date.now() - t0) / 1000);
       const err = new Error(e.name === 'AbortError' ? `응답이 ${sec}초 넘게 오지 않았습니다` : `서버 연결이 끊겼습니다 (${sec}초 후, ${e.message})`);
-      err.sec = sec; err.net = true; throw err;
+      err.sec = sec; err.net = true; err.kind = e.name === 'AbortError' ? 'timeout' : 'net'; throw err;
     } finally { clearTimeout(timer); }
   };
   // 연결이 끊기거나(휴대폰 네트워크) 서버가 일시적으로 실패하면 최대 두 번 더 시도한다
@@ -262,12 +277,21 @@ async function postDiagnose(body) {
     if (k) await new Promise(res => setTimeout(res, 1500 * k));
     try {
       const out = await send();
-      if ([502, 503, 504].includes(out.r.status) && out.j.error !== 'no_api_key' && k < 2) { last = new Error(httpMsg(out.r, out.j)); continue; }
+      if ([502, 503, 504].includes(out.r.status) && out.j.error !== 'no_api_key' && k < 2) { last = Object.assign(new Error(httpMsg(out.r, out.j)), { kind: errKind(out.r, out.j) }); continue; }
       return out;
     } catch (e) { last = e; if (!e.net) throw e; }
   }
   throw last;
 }
+// 화면에 보일 오류 문구: 원인 종류만 쉽게 알려 주고, 자세한 내용(상태 코드 등)은 개발자 도구 콘솔에만 남긴다
+function friendly(kind, detail) {
+  if (detail) console.warn('[한 줄 진단]', detail);
+  return kind === 'net' ? '인터넷 연결이 불안정해 진단하지 못했습니다.'
+    : kind === 'timeout' ? 'AI 응답이 늦어져 진단하지 못했습니다.'
+    : kind === 'busy' ? '짧은 시간에 진단을 많이 해서 잠시 멈췄습니다. 몇 분 뒤 다시 시도해 주세요.'
+    : 'AI가 이 사진을 제대로 읽지 못했습니다.';
+}
+const errKind = (r, j) => r.status === 429 ? 'busy' : r.status === 504 || j.error === 'timeout' ? 'timeout' : j.error === 'network' ? 'net' : 'read';
 const httpMsg = (r, j) => j.message || j.error ? `${j.message || j.error} (HTTP ${r.status}, ${j.__sec}초)` : `HTTP ${r.status} (${j.__sec}초)`;
 
 // ---------- 가림 편집 ----------
@@ -351,7 +375,7 @@ function drawReview() {
       <p class="small muted">AI로 보내기 전에 가려진 모습을 확인해 주세요. 학원 이름·로고·학생 이름이 보이면 "직접 편집"으로 더 가리면 됩니다. 확인을 누른 뒤에 진단을 시작합니다.</p></div>
     <div class="rgrid">${ph.map(it => `<figure>
       <div class="rimg"><img src="${it.photo}" alt="가린 시험지 사진"></div>
-      <figcaption><span><b>학생 ${esc(it.s)}</b> · ${it.masks.length ? `<span class="hid">가림 ${it.masks.length}곳</span>` : '<span class="low">가린 곳 없음</span>'}</span>
+      <figcaption><span><b>${esc(it.s)}</b>${it.masks.length ? '' : ' · <span class="low">가린 곳 없음</span>'}</span>
         <span class="rbtns"><button class="btn ghost" data-rv-edit="${it.id}" type="button">직접 편집</button><button class="linkbtn" data-rv-del="${it.id}" type="button">빼기</button></span></figcaption></figure>`).join('')}</div>
     <div class="actions"><button class="btn ghost" data-rv="later" type="button">나중에</button><span style="flex:1"></span>
       <button class="btn ok" data-rv="start" type="button">이대로 진단 시작 (${ph.length}장)</button></div>`;
@@ -417,19 +441,19 @@ async function diagnoseItem(it) {
     if (r.status === 503 && j.error === 'no_api_key') throw Object.assign(new Error('demo'), { demo: true });
     if (r.status === 401) { ui.codeOk = false; throw Object.assign(new Error('체험 코드가 맞지 않음'), { demo: true }); }
     if (r.status === 422) { it.status = 'err'; it.errMsg = j.message || '문항을 찾지 못했습니다'; return; }
-    if (!r.ok || !j.result) throw new Error(httpMsg(r, j));
+    if (!r.ok || !j.result) throw Object.assign(new Error(httpMsg(r, j)), { kind: errKind(r, j) });
     result = j.result;
   } catch (e) {
     // 시험지 문항은 예시 결과로 대신하지 않고 실패로 남겨 다시 진단하게 한다
-    if (it.sheet && !e.demo) { it.status = 'err'; it.errMsg = '진단하지 못했습니다: ' + e.message; return; }
+    if (it.sheet && !e.demo) { it.status = 'err'; it.errMsg = friendly(e.kind || 'read', e.message); return; }
     if (!e.demo) note = 'AI 진단에 실패해 예시 결과를 보여 줍니다 (' + e.message + ').';
     await new Promise(res => setTimeout(res, 900 + Math.random() * 700));
     result = demoResult(q, it.s); mode = 'demo';
   }
   if (it.sheet && mode === 'ai') {
     if (result.problem_text) it.sheet.text = String(result.problem_text);
-    if (result.topic) it.sheet.topic = String(result.topic).slice(0, 40);
-    if (result.unit) it.sheet.unitName = String(result.unit).slice(0, 30);
+    if (result.topic) it.sheet.topic = clip(result.topic, 40);
+    if (result.unit) it.sheet.unitName = clip(result.unit, 30);
     if (!it.sheet.ans && result.correct_answer) { it.sheet.aiAns = String(result.correct_answer); }
     const g = result.question_region, ok = v => typeof v === 'number' && isFinite(v);
     it.region = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 && g.w <= 1.01 && g.h <= 1.01
@@ -445,10 +469,10 @@ async function scanItem(it, todo) {
   if (!aiOn()) { it.status = 'err'; it.errMsg = '시험지 전체에서 문항을 찾는 기능은 실제 AI가 연결되어 있을 때만 됩니다 (체험 코드 필요).'; return; }
   let j = {}, r;
   try { ({ r, j } = await postDiagnose({ image: it.photo, scan: true, answer: it.sheet.keyText || '' })); }
-  catch (e) { it.status = 'err'; it.errMsg = '문항을 찾지 못했습니다: ' + e.message; return; }
+  catch (e) { it.status = 'err'; it.errMsg = friendly(e.kind, e.message); return; }
   if (r.status === 401) ui.codeOk = false;
   const qs = r.ok && j.result && Array.isArray(j.result.questions) ? j.result.questions : null;
-  if (!qs || !qs.length) { it.status = 'err'; it.errMsg = qs ? '사진에서 문항을 찾지 못했습니다.' : '문항을 찾지 못했습니다: ' + httpMsg(r, j); return; }
+  if (!qs || !qs.length) { it.status = 'err'; it.errMsg = qs ? '이 사진에서 문항을 찾지 못했습니다.' : friendly(errKind(r, j), httpMsg(r, j)); return; }
   const ok = v => typeof v === 'number' && isFinite(v);
   const seen = new Set();
   const made = qs.map(q => ({ ...q, no: String(q.no || '').replace(/[^0-9]/g, '') }))
@@ -460,7 +484,7 @@ async function scanItem(it, todo) {
       const x = { id: 'p' + (++seq), reviewed: true, name: it.name, img: it.img, rot: it.rot, masks: it.masks, photo: it.photo, thumb: it.thumb, grp: it.grp,
         s: it.s, qid: sheetQid(it.sheet.exam, q.no), q: null, hint, region: hint, saved: false, cur: null,
         sheet: { exam: it.sheet.exam, no: q.no, ans: (it.sheet.key || {})[q.no] || '', aiAns: q.correct_answer || '', text: '',
-          topic: q.topic ? String(q.topic).slice(0, 40) : '', unitName: q.unit ? String(q.unit).slice(0, 30) : '' } };
+          topic: clip(q.topic, 40), unitName: clip(q.unit, 30) } };
       if (q.verdict === 'correct') {
         // 빠른 판정: 자세한 진단 없이 정답으로 표시 (선생님이 '다시 진단'으로 자세히 볼 수 있음)
         x.status = 'done'; x.quick = true;
@@ -569,7 +593,7 @@ function confirmItem(it, quiet) {
   if (!quiet) {
     save(); renderDx(); updateCounts();
     const next = ui.queue.find(x => x.status === 'done' && !x.saved);
-    toast(cur.correct ? `학생 ${it.s}의 풀이를 정답으로 기록했어요` : `학생 ${it.s}의 진단을 반영했어요`,
+    toast(cur.correct ? `${it.s}의 풀이를 정답으로 기록했어요` : `${it.s}의 진단을 반영했어요`,
       next ? [['다음 진단서 보기', () => { ui.sel = next.id; ui.pickLine = false; renderDx(); }]] : [['진찰 기록 보기', () => show('brief')], ['처방전 보기', () => show('stu')]]);
   }
   return true;
@@ -600,7 +624,7 @@ function codeBox() {
 }
 function renderDxForm() {
   const sh = ui.dx.sheet;
-  const sOpts = S.students.map(x => `<option value="${esc(x)}"${x === ui.dx.s ? ' selected' : ''}>학생 ${esc(x)}</option>`).join('') +
+  const sOpts = S.students.map(x => `<option value="${esc(x)}"${x === ui.dx.s ? ' selected' : ''}>${esc(x)}</option>`).join('') +
     `<option value="__new"${ui.dx.s === '__new' ? ' selected' : ''}>+ 새 학생</option>`;
   const waiting = ui.queue.filter(it => it.status === 'wait' || it.status === 'err').length;
   const qn = ui.queue.length;
@@ -610,7 +634,7 @@ function renderDxForm() {
     ${codeBox()}
     <div class="field"><label for="ssel"><span class="stepno">1</span>학생</label>
       <select id="ssel">${sOpts}</select>
-      ${ui.dx.s === '__new' ? `<input type="text" id="sname" placeholder="학생 이름 또는 번호" value="${esc(ui.dx.newName)}">` : ''}
+      ${ui.dx.s === '__new' ? `<input type="text" id="sname" placeholder="학생 이름 (예: 학생 I, 지민)" value="${esc(ui.dx.newName)}">` : ''}
       <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}><span>여러 장은 이 학생의 여러 쪽 <span class="muted">(끄면 학생을 차례로 배정)</span></span></label>
     </div>
     <div class="field"><span class="lab"><span class="stepno">2</span>시험지 사진</span>
@@ -641,14 +665,14 @@ function queueHtml() {
     let st;
     if (it.status === 'wait') st = `<span class="qst">${it.scan ? '문항 찾기 대기' : '대기'}</span>`;
     else if (it.status === 'run') st = `<span class="qst run">${it.scan ? '문항 찾는 중' : '진단 중'}</span>`;
-    else if (it.status === 'err') st = `<span class="qst bad" title="${esc(it.errMsg || '')}">${it.errMsg ? '못 찾음' : '실패'}</span>`;
+    else if (it.status === 'err') st = `<span class="qst bad" title="${esc(it.errMsg || '')}">다시 시도 필요</span>`;
     else if (it.saved) st = '<span class="qst ok">✓ 반영</span>';
     else if (it.cur.correct) st = `<span class="qst ok">정답${it.quick ? '(빠른)' : ''}</span>`;
     else st = `${causeTag(it.cur.rec.cause)}${it.cur.rec.conf < LOW ? '<span class="qst bad">확인</span>' : ''}`;
     return `<div class="qrow2${it.id === ui.sel ? ' on' : ''}" data-sel-item="${it.id}">
       <img src="${it.thumb}" alt="">
       <div class="qmeta"><select data-item-s="${it.id}" aria-label="학생"${it.status === 'run' || it.saved ? ' disabled' : ''}>${stOpts(it.s)}</select>
-        <span class="small muted">${q ? qNo(q) : '직접 입력'}${it.masks.length ? ` · <span class="hid">가림 ${it.masks.length}곳</span>` : ''}</span>
+        <span class="small muted">${q ? qNo(q) : '직접 입력'}</span>
         ${it.reviewed ? '' : '<span class="small low">가림 확인 전</span>'}</div>
       <div class="qstate">${st}</div>
       <button class="x" data-del-item="${it.id}" aria-label="이 사진 빼기" ${it.status === 'run' ? 'disabled' : ''}>×</button></div>`;
@@ -678,10 +702,10 @@ function renderDxOut() {
   const it = selItem();
   let card = '';
   if (it && it.status === 'done' && it.cur) card = resultCard(it);
-  else if (it && it.status === 'err') card = `<div class="card"><div class="res-head"><div><h2>학생 ${esc(it.s)} · ${esc(problemOf(it).topic || '')}</h2>
+  else if (it && it.status === 'err') card = `<div class="card"><div class="res-head"><div><h2>${esc(it.s)} · ${esc(problemOf(it).topic || '')}</h2>
       <p class="muted small">${esc(it.errMsg || '진단하지 못했습니다.')}</p></div></div>
       <div class="res-grid"><div class="photo" data-zoom-item="${it.id}"><img src="${it.photo}" alt="학생 풀이 사진"></div>
-      <div class="small">${/HTTP|연결|초 넘게|초 후/.test(it.errMsg || '') ? '서버나 네트워크 문제입니다. 잠시 후 "다시 진단"을 눌러 주세요. 같은 오류가 반복되면 이 화면을 캡처해 알려 주세요.' : it.scan ? '사진이 너무 흐리거나 시험지가 잘려 있지 않은지 확인해 주세요.' : it.sheet ? '번호가 사진에 잘 보이는지, 문항 번호를 바르게 적었는지 확인해 주세요. 사진이 옆으로 누워 있다면 빼고 다시 올려 주세요.' : ''}</div></div>
+      <div class="small">"다시 진단"을 누르면 다시 시도합니다.${it.scan ? ' 계속 안 되면 사진이 흐리거나 시험지가 잘려 있지 않은지 확인해 주세요.' : it.sheet ? ' 계속 안 되면 문항 번호가 사진에 잘 보이는지 확인해 주세요.' : ''}</div></div>
       <div class="actions"><button class="btn ghost" data-act="again">다시 진단</button></div></div>`;
   else if (it && it.status === 'run') card = `<div class="card"><div class="loading"><div class="st now"><i></i>이 사진을 진단하는 중</div></div></div>`;
   else if (!ui.queue.length || (it && it.status === 'wait' && !ui.running)) {
@@ -694,7 +718,7 @@ function renderDxOut() {
 }
 function resultCard(it) {
   const cur = it.cur; const r = cur.rec; const q = problemOf(it);
-  const head = `<div class="res-head"><div><h2>학생 ${esc(it.s)} · ${qPre(q)}${q.topic ? esc(q.topic) : ''}</h2>
+  const head = `<div class="res-head"><div><h2>${esc(it.s)} · ${qPre(q)}${q.topic ? esc(q.topic) : ''}</h2>
       <p class="muted small">${q.unit ? q.id + '번 · ' + unitLabel(q) : unitLabel(q)}${ui.queue.length > 1 ? ` · ${ui.queue.indexOf(it) + 1}번째` : ''}</p></div>
       <div class="meta">${cur.mode === 'ai' ? '<span class="badge ai">AI 진단</span>' : '<span class="badge demo">데모 모드 · 예시 결과</span>'}
       ${!cur.correct ? `<span class="badge ${r.conf < LOW ? 'low' : 'ai'}">신뢰도 ${pct(r.conf)}%</span>` : ''}</div></div>`;
@@ -748,7 +772,7 @@ function renderSession() {
     <div class="actions"><button class="btn ghost" data-go="brief">진찰 기록 보기</button><button class="btn ghost" data-go="stu">처방전 보기</button></div></div>
     <div class="session">${S.session.slice(0, 12).map(x => { const q = qOf(x.q); return `<div class="row">
       ${x.thumb ? `<img src="${x.thumb}" alt="">` : '<span></span>'}
-      <div><b>학생 ${esc(x.s)}</b> · ${q ? qPre(q) + esc(q.topic) : ''} <span class="small muted">${x.mode === 'ai' ? 'AI 진단' : '예시 진단'}</span></div>
+      <div><b>${esc(x.s)}</b> · ${q ? qPre(q) + esc(q.topic) : ''} <span class="small muted">${x.mode === 'ai' ? 'AI 진단' : '예시 진단'}</span></div>
       <div>${x.correct ? '<span class="done">정답</span>' : causeTag(x.cause)}</div></div>`; }).join('')}</div>`;
 }
 
@@ -761,7 +785,7 @@ function renderVersus() {
     const rs = o.rs.filter(r => r.cause === k);
     const who = rs.map(r => {
       const line = r.err != null ? `<span class="h">${esc(r.work[r.err])}</span>` : `<span class="h none">${r.work.length ? '풀이 중단' : '빈칸'}</span>`;
-      return `<div class="mini"><b>학생 ${esc(r.s)}</b>${line}</div>`;
+      return `<div class="mini"><b>${esc(r.s)}</b>${line}</div>`;
     }).join('');
     return `<div class="grp"><div>${causeTag(k)}<div class="small muted num">${rs.length}명</div></div>
       <div class="who">${who}<div class="rx"><b>지도</b> ${D.causes[k].tip}</div></div></div>`;
@@ -806,7 +830,7 @@ function renderBrief() {
     <div class="track" role="img" aria-label="${esc(o.q.topic)} 오답률 ${pct(o.rate)}%">${CK.filter(k => o.by[k] > 0).map(k => `<div class="${k}" style="width:${o.by[k] / o.takers * 100}%" title="${D.causes[k].short} ${o.by[k]}명"></div>`).join('')}</div>
     <div class="num">${o.n}/${o.takers} · ${pct(o.rate)}%</div></div>`).join('');
   const axis = `<div class="axis"><div></div><div class="ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div><div></div></div>`;
-  const watchHtml = watch.map(x => `<div class="row"><b>학생 ${esc(x.s)}</b><span class="num">${x.score}점</span>
+  const watchHtml = watch.map(x => `<div class="row"><b>${esc(x.s)}</b><span class="num">${x.score}점</span>
     <span>${CK.filter(k => x.by[k] > 0).map(k => causeTag(k) + ' ' + x.by[k]).join(' &nbsp; ')}</span>
     <button class="btn ghost" data-go-stu="${esc(x.s)}">오답 처방전 보기</button></div>`).join('');
   $('p-brief').innerHTML = `
@@ -837,7 +861,7 @@ function renderBrief() {
 function renderStu() {
   if (!S.students.includes(ui.stu)) ui.stu = S.students[0];
   const s = ui.stu, st = sStat(s);
-  const chips = S.students.map(x => `<button class="chip" aria-pressed="${x === s}" data-stu="${esc(x)}">학생 ${esc(x)}</button>`).join('');
+  const chips = S.students.map(x => `<button class="chip" aria-pressed="${x === s}" data-stu="${esc(x)}">${esc(x)}</button>`).join('');
   const items = [...st.rs].sort((a, b) => String(a.q).localeCompare(String(b.q), undefined, { numeric: true })).map(r => {
     const q = qOf(r.q) || { id: r.q, topic: '', text: '', ans: '-', unit: 0, sim: { text: '-', ans: '-' } };
     const sim = r.sim || q.sim;
@@ -861,7 +885,7 @@ function renderStu() {
     <div class="chips" role="group" aria-label="학생 선택">${chips}</div>
     <div class="card">
       <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
-        <div><h2>학생 ${esc(s)} 오답 처방전</h2><p class="muted small num">${esc(S.name)} · ${scoreTxt} · 오답 ${st.rs.length}문항${st.rs.length ? ' · ' + CK.filter(k => st.by[k] > 0).map(k => D.causes[k].short + ' ' + st.by[k]).join(', ') : ''}</p></div>
+        <div><h2>${esc(s)} 오답 처방전</h2><p class="muted small num">${esc(S.name)} · ${scoreTxt} · 오답 ${st.rs.length}문항${st.rs.length ? ' · ' + CK.filter(k => st.by[k] > 0).map(k => D.causes[k].short + ' ' + st.by[k]).join(', ') : ''}</p></div>
         ${st.rs.length ? '<button class="btn ghost" data-act="print">인쇄하기</button>' : ''}
       </div>
       ${st.rs.length ? `<div class="note"><b>가장 먼저 고칠 것</b><br>${focus}. ${st.top.map(k => D.causes[k].tip).join(' ')}</div>
@@ -879,15 +903,15 @@ function renderChk() {
   const recs = [...S.recs].sort((a, b) => a.conf - b.conf);
   const list = recs.filter(r => ui.showAll || (r.conf < LOW && !r.confirmed));
   const qs = allQs();
-  const grid = S.students.map(s => `<tr><td><b>학생 ${esc(s)}</b></td>${qs.map(q => {
+  const grid = S.students.map(s => `<tr><td><b>${esc(s)}</b></td>${qs.map(q => {
     const r = S.recs.find(x => x.s === s && String(x.q) === String(q.id));
-    if (r) return `<td><button class="cell" data-rec="${r.id}" aria-label="학생 ${esc(s)} ${esc(q.topic)} 오답, ${D.causes[r.cause].name}">${D.causes[r.cause].short.slice(0, 1)}</button></td>`;
+    if (r) return `<td><button class="cell" data-rec="${r.id}" aria-label="${esc(s)} ${esc(q.topic)} 오답, ${D.causes[r.cause].name}">${D.causes[r.cause].short.slice(0, 1)}</button></td>`;
     return gradedOf(s).includes(String(q.id)) ? `<td><span class="cell ok" aria-label="정답">○</span></td>` : `<td><span class="cell ok" aria-label="채점 안 함" style="opacity:.35">·</span></td>`;
   }).join('')}</tr>`).join('');
   const items = list.map(r => {
     const q = qOf(r.q) || { id: r.q, topic: '', ans: '-' };
     return `<div class="rec" id="rec-${r.id}">
-      <div class="side" style="display:flex;flex-direction:column;gap:8px;min-width:0"><div><b>학생 ${esc(r.s)} · ${qNo(q)}</b> <span class="muted small">${esc(q.topic)}</span> ${srcTag(r)}</div>
+      <div class="side" style="display:flex;flex-direction:column;gap:8px;min-width:0"><div><b>${esc(r.s)} · ${qNo(q)}</b> <span class="muted small">${esc(q.topic)}</span> ${srcTag(r)}</div>
         ${workBox(r, { sm: true })}
         <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 ${esc(q.ans)}</span></div></div>
       <div class="small" style="display:flex;flex-direction:column;gap:6px"><div>AI 분류 ${causeTag(r.cause)} ${statusTxt(r)}</div><div>${esc(r.why)}</div></div>
@@ -926,13 +950,13 @@ function renderNew() {
     `<option value="custom"${custom ? ' selected' : ''}>직접 입력</option>`;
   $('p-new').innerHTML = `<div class="card onboard">
     <div><h2>${DB.groups.length ? '새 반 만들기' : '반을 만들고 시작하세요'}</h2>
-      <p class="muted small">반 이름과 학생 수를 정하면 학생 이름이 A부터 자동으로 붙습니다. 이름은 아래에서 바로 고칠 수 있고, 나중에 "반 관리"에서도 바꿀 수 있습니다.</p></div>
+      <p class="muted small">반 이름과 학생 수를 정하면 "학생 A", "학생 B"처럼 이름이 자동으로 붙습니다. 이름은 아래에서 바로 고칠 수 있고, 나중에 "반 관리"에서도 바꿀 수 있습니다.</p></div>
     <div class="field"><label for="gName"><span class="stepno">1</span>반 이름</label>
       <input type="text" id="gName" placeholder="예: 중1 A반 (월·수 7시)" value="${esc(g.name)}" maxlength="30"></div>
     <div class="field"><label for="gCount"><span class="stepno">2</span>학생 수</label>
       <div class="countrow"><select id="gCount">${counts}</select>
         ${custom ? `<input type="number" id="gCountIn" min="1" max="60" value="${g.count}" inputmode="numeric" aria-label="학생 수 직접 입력"><span class="muted small">명 (최대 60명)</span>` : ''}</div></div>
-    <div class="field"><span class="lab"><span class="stepno">3</span>학생 이름 <button class="linkbtn" id="gAuto" type="button">A부터 다시 붙이기</button></span>
+    <div class="field"><span class="lab"><span class="stepno">3</span>학생 이름 <button class="linkbtn" id="gAuto" type="button">자동 이름으로 되돌리기</button></span>
       <div class="stugrid" id="gNames">${namesHtml(names)}</div>
       <span class="privacy">실명 대신 이니셜이나 번호를 쓰기를 권합니다. 기록은 이 브라우저에만 저장됩니다.</span></div>
     <div class="actions"><button class="btn ok" id="gCreate" type="button">반 만들기</button>
@@ -940,7 +964,7 @@ function renderNew() {
     ${DB.groups.some(x => x.sample) ? '' : `<p class="small muted">먼저 둘러보고 싶다면 <button class="linkbtn" id="gSample" type="button">샘플 반 열어 보기</button> (가상의 학생 8명 기록)</p>`}
   </div>`;
 }
-const namesHtml = names => names.map((n, i) => `<input type="text" data-gi="${i}" value="${esc(n)}" maxlength="12" aria-label="${i + 1}번째 학생 이름">`).join('');
+const namesHtml = names => names.map((n, i) => `<input type="text" data-gi="${i}" value="${esc(n)}" maxlength="16" aria-label="${i + 1}번째 학생 이름">`).join('');
 function checkNames(list) {
   const t = list.map(x => String(x || '').trim());
   if (t.some(x => !x)) return '비어 있는 학생 이름이 있어요';
@@ -974,7 +998,7 @@ function drawGroupDlg() {
   dlg.innerHTML = `<div class="rhead"><h2>반 관리</h2><p class="small muted">이름을 바꾸면 그 학생의 기록도 함께 옮겨집니다.</p></div>
     <div class="field"><label for="geName">반 이름</label><input type="text" id="geName" value="${esc(e.name)}" maxlength="30"></div>
     <div class="field"><span class="lab">학생 ${e.rows.length}명</span>
-      <div class="stugrid edit">${e.rows.map((r, i) => `<div class="srow"><input type="text" data-ge="${i}" value="${esc(r.name)}" maxlength="12" aria-label="학생 이름">
+      <div class="stugrid edit">${e.rows.map((r, i) => `<div class="srow"><input type="text" data-ge="${i}" value="${esc(r.name)}" maxlength="16" aria-label="학생 이름">
         <button class="x" data-gdel="${i}" type="button" aria-label="학생 빼기" title="${cnt(r.orig) ? '기록 ' + cnt(r.orig) + '건' : ''}">×</button></div>`).join('')}</div>
       <button class="linkbtn" data-gact="add" type="button">+ 학생 추가</button></div>
     <div class="actions"><button class="btn ghost danger" data-gact="delgroup" type="button">이 반 삭제</button><span style="flex:1"></span>

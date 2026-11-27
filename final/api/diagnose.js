@@ -72,14 +72,15 @@ const SCAN_SYSTEM = `당신은 학원 수학 강사의 채점을 돕는 도우�
 사진에서 어둡게 칠한 '개인정보 가림' 영역은 무시하세요. 반드시 submit_page 도구로만 답하세요.
 사진에 있는 모든 문항을 번호 순서대로 찾고, 문항마다 다음을 적습니다.
 - no: 인쇄된 문항 번호
-- region: 사진 전체를 0~1로 볼 때 그 문항(문제와 학생 풀이 전체)이 차지하는 직사각형, 넉넉하게
+- x, y, w, h: 사진 전체를 0~1로 볼 때 그 문항(문제와 학생 풀이 전체)이 차지하는 직사각형 (x,y는 왼쪽 위), 넉넉하게
 - student_answer: 학생이 고른 보기 번호와 값, 또는 쓴 최종 답 (없으면 "무응답")
 - correct_answer: 직접 풀어 본 정답 (정답표가 주어지면 그 값)
 - verdict: 학생 답이 정답과 같으면 correct, 다르면 wrong, 답을 읽기 어렵거나 풀이가 확실하지 않으면 unsure
   선생님의 채점 표시(빨간 동그라미·빗금·체크)는 참고만 하고, 판단은 답의 내용으로 합니다. 조금이라도 의심되면 unsure로 둡니다.
 - topic: 문제 유형을 짧게 (예: "일차방정식의 활용 - 거리·속력·시간", "정비례와 반비례 그래프")
 - unit: 중등 수학 단원 이름 (예: "일차방정식", "좌표평면과 그래프", "정수와 유리수")
-- note: 판정 근거 한 문장`;
+- note: 판정 근거를 짧게 (20자 안팎)
+모든 값은 일반 텍스트로만 쓰고, 태그나 마크업을 넣지 마세요.`;
 const SCAN_TOOL = {
   name: 'submit_page',
   description: '시험지 한 쪽에서 찾은 문항 목록을 제출한다.',
@@ -92,7 +93,10 @@ const SCAN_TOOL = {
           type: 'object',
           properties: {
             no: { type: 'string' },
-            region: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } } },
+            x: { type: 'number', description: '문항 영역 왼쪽 (0~1)' },
+            y: { type: 'number', description: '문항 영역 위쪽 (0~1)' },
+            w: { type: 'number', description: '문항 영역 너비 (0~1)' },
+            h: { type: 'number', description: '문항 영역 높이 (0~1)' },
             student_answer: { type: 'string' },
             correct_answer: { type: 'string' },
             verdict: { type: 'string', enum: ['correct', 'wrong', 'unsure'] },
@@ -176,56 +180,97 @@ module.exports = async function handler(req, res) {
   const t0 = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 54000);
+  const tag = scan ? 'scan' : qno ? 'q' + qno : 'problem';
+  const callClaude = () => fetch('https://api.anthropic.com/v1/messages', {
+    signal: ctrl.signal,
+    method: 'POST',
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: scan ? 4000 : 2500,
+      system: scan ? SCAN_SYSTEM : SYSTEM,
+      tools: [scan ? SCAN_TOOL : TOOL],
+      tool_choice: { type: 'auto' },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
+          { type: 'text', text: scan ? `이 시험지 사진의 문항을 모두 찾아 submit_page 도구로 제출해 주세요.${answer ? '\n정답표: ' + answer : ''}` : userText }
+        ]
+      }]
+    })
+  });
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      signal: ctrl.signal,
-      method: 'POST',
-      headers: {
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: scan ? 3000 : 2500,
-        system: scan ? SCAN_SYSTEM : SYSTEM,
-        tools: [scan ? SCAN_TOOL : TOOL],
-        tool_choice: { type: 'auto' },
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } },
-            { type: 'text', text: scan ? `이 시험지 사진의 문항을 모두 찾아 주세요.${answer ? '\n정답표: ' + answer : ''}` : userText }
-          ]
-        }]
-      })
-    });
-    const j = await r.json().catch(() => ({}));
+    // 답의 형식이 깨졌으면(도구 호출 누락·잘린 응답) 시간이 남을 때 한 번 더 묻는다
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const r = await callClaude();
+      const j = await r.json().catch(() => ({}));
+      console.log(`[diagnose] ${tag} try${attempt} ${r.status} ${Date.now() - t0}ms stop=${j.stop_reason || '-'}`, j.usage ? JSON.stringify(j.usage) : '');
+      if (!r.ok) {
+        clearTimeout(timer);
+        const msg = (j && j.error && j.error.message) || `HTTP ${r.status}`;
+        return res.status(502).json({ error: 'upstream', status: r.status, message: msg });
+      }
+      const result = readResult(j, scan);
+      const ok = scan ? result && Array.isArray(result.questions) && result.questions.length
+                      : result && (result.question_found === false || Array.isArray(result.transcribed_lines));
+      if (ok) {
+        clearTimeout(timer);
+        if (!scan && result.question_found === false) return res.status(422).json({ error: 'question_not_found', message: `${qno}번 문항을 사진에서 찾지 못했습니다` });
+        return res.status(200).json({ ok: true, model: j.model || MODEL, result, usage: j.usage || null });
+      }
+      console.log(`[diagnose] ${tag} unreadable answer:`, JSON.stringify(j.content || []).slice(0, 600));
+      if (Date.now() - t0 > 26000) break;
+    }
     clearTimeout(timer);
-    console.log(`[diagnose] ${scan ? 'scan' : qno ? 'q' + qno : 'problem'} ${r.status} ${Date.now() - t0}ms`, j.usage ? JSON.stringify(j.usage) : '');
-    if (!r.ok) {
-      const msg = (j && j.error && j.error.message) || `HTTP ${r.status}`;
-      return res.status(502).json({ error: 'upstream', status: r.status, message: msg });
-    }
-    const block = (j.content || []).find(b => b.type === 'tool_use' && b.name === (scan ? 'submit_page' : 'submit_diagnosis'));
-    let result = block ? block.input : null;
-    if (!result) {
-      // 도구 대신 글로 답한 경우: 본문에서 JSON을 찾아 읽는다
-      const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-      const m = text.match(/\{[\s\S]*\}/);
-      if (m) { try { result = JSON.parse(m[0]); } catch (e) { result = null; } }
-    }
-    if (scan) {
-      if (!result || !Array.isArray(result.questions)) return res.status(502).json({ error: 'no_result' });
-      return res.status(200).json({ ok: true, model: j.model || MODEL, result, usage: j.usage || null });
-    }
-    if (result && result.question_found === false) return res.status(422).json({ error: 'question_not_found', message: `${qno}번 문항을 사진에서 찾지 못했습니다` });
-    if (!result || !Array.isArray(result.transcribed_lines)) return res.status(502).json({ error: 'no_result' });
-    return res.status(200).json({ ok: true, model: j.model || MODEL, result, usage: j.usage || null });
+    return res.status(502).json({ error: 'no_result' });
   } catch (e) {
     clearTimeout(timer);
-    console.log(`[diagnose] ${scan ? 'scan' : 'q' + qno} failed after ${Date.now() - t0}ms:`, e && e.message);
+    console.log(`[diagnose] ${tag} failed after ${Date.now() - t0}ms:`, e && e.message);
     if (e && e.name === 'AbortError') return res.status(504).json({ error: 'timeout', message: `AI 응답이 ${Math.round((Date.now() - t0) / 1000)}초 안에 오지 않았습니다` });
     return res.status(502).json({ error: 'network', message: String(e && e.message || e) });
   }
 };
+
+// ---- AI 답 읽기 ----
+// 도구 입력이 문자열로 감싸져 오거나(배열·객체를 JSON 문자열로), 값 안에 도구 형식 태그가 섞여 들어오는 경우를 바로잡는다
+function cleanStr(v) {
+  let t = String(v);
+  const cut = t.search(/<\/?(?:parameter|invoke|antml|function|topic|unit|note|no|region|verdict|student_answer|correct_answer)\b|<\/[a-z_]+>/i);
+  if (cut >= 0) t = t.slice(0, cut);
+  return t.replace(/<\/?[a-zA-Z_][\w-]*(?:\s+[\w-]+="[^"]*")*\s*\/?>/g, '').replace(/\s+$/,'').trim();
+}
+function tidy(v) {
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if ((t.startsWith('[') && t.endsWith(']')) || (t.startsWith('{') && t.endsWith('}'))) { try { return tidy(JSON.parse(t)); } catch (e) { } }
+    return cleanStr(v);
+  }
+  if (Array.isArray(v)) return v.map(tidy);
+  if (v && typeof v === 'object') { const o = {}; for (const k of Object.keys(v)) o[k] = tidy(v[k]); return o; }
+  return v;
+}
+function readResult(j, scan) {
+  const name = scan ? 'submit_page' : 'submit_diagnosis';
+  const block = (j.content || []).find(b => b.type === 'tool_use' && b.name === name) || (j.content || []).find(b => b.type === 'tool_use');
+  let result = block ? block.input : null;
+  if (!result) {
+    // 도구 대신 글로 답한 경우: 본문에서 JSON을 찾아 읽는다
+    const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) { try { result = JSON.parse(m[0]); } catch (e) { result = null; } }
+  }
+  if (!result) return null;
+  result = tidy(result);
+  if (scan && !Array.isArray(result.questions) && Array.isArray(result)) result = { questions: result };
+  if (scan && Array.isArray(result.questions)) {
+    // 위치는 region 객체나 x·y·w·h 어느 쪽으로 와도 받는다
+    result.questions = result.questions.filter(q => q && typeof q === 'object').map(q => {
+      const g = q.region && typeof q.region === 'object' ? q.region : q;
+      const num = x => (typeof x === 'number' ? x : parseFloat(x));
+      const region = [g.x, g.y, g.w, g.h].every(x => isFinite(num(x))) ? { x: num(g.x), y: num(g.y), w: num(g.w), h: num(g.h) } : null;
+      return { ...q, no: String(q.no == null ? '' : q.no), region };
+    });
+  }
+  return result;
+}

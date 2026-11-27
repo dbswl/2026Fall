@@ -255,8 +255,17 @@ async function postDiagnose(body) {
       err.sec = sec; err.net = true; throw err;
     } finally { clearTimeout(timer); }
   };
-  try { return await send(); }
-  catch (e) { if (e.net && e.sec < 10) { await new Promise(res => setTimeout(res, 1500)); return await send(); } throw e; }
+  // 연결이 끊기거나(휴대폰 네트워크) 서버가 일시적으로 실패하면 최대 두 번 더 시도한다
+  let last;
+  for (let k = 0; k < 3; k++) {
+    if (k) await new Promise(res => setTimeout(res, 1500 * k));
+    try {
+      const out = await send();
+      if ([502, 503, 504].includes(out.r.status) && out.j.error !== 'no_api_key' && k < 2) { last = new Error(httpMsg(out.r, out.j)); continue; }
+      return out;
+    } catch (e) { last = e; if (!e.net) throw e; }
+  }
+  throw last;
 }
 const httpMsg = (r, j) => j.message || j.error ? `${j.message || j.error} (HTTP ${r.status}, ${j.__sec}초)` : `HTTP ${r.status} (${j.__sec}초)`;
 

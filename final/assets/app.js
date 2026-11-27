@@ -51,7 +51,9 @@ const ui = {
   tab: 'dx', stu: 'A', showAll: false,
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
   dx: { qid: 12, s: 'A', custom: { text: '', ans: '' }, newName: '' },
-  queue: [], sel: null, pickLine: false, running: false
+  queue: [], sel: null, pickLine: false, running: false,
+  redact: lsGet(STORE + '.redact') !== '0',   // 개인정보 자동 가리기 (기본 켬)
+  edit: null                                   // 가림 편집 중인 사진
 };
 
 const allQs = () => D.questions.concat(S.custom);
@@ -163,16 +165,84 @@ async function takeFiles(files) {
   for (const f of imgs) {
     try {
       const img = await readImage(f);
-      const it = { id: 'p' + (++seq), name: f.name, photo: resize(img, 1600, 0.86), thumb: resize(img, 360, 0.7),
+      // 원본(img)은 이 화면의 메모리에만 두고, 서버·저장소에는 가린 사진만 쓴다
+      const a = ui.redact && window.Redact ? Redact.analyze(img) : { rot: 0, masks: [] };
+      const it = { id: 'p' + (++seq), name: f.name, img, rot: a.rot, masks: a.masks, auto: a.masks.length,
         qid, q: qid === 'new' ? { text: ui.dx.custom.text.trim(), ans: ui.dx.custom.ans.trim() } : null,
         s: nextStudent(qid), status: 'wait', cur: null, saved: false };
+      paint(it);
       ui.queue.push(it);
       if (!ui.sel) ui.sel = it.id;
     } catch (e) { toast('사진을 읽지 못했습니다: ' + f.name); }
   }
   renderDx();
 }
+function paint(it) {
+  if (window.Redact) { it.photo = Redact.render(it.img, it.rot, it.masks, 1600, 0.86); it.thumb = Redact.render(it.img, it.rot, it.masks, 360, 0.7); }
+  else { it.photo = resize(it.img, 1600, 0.86); it.thumb = resize(it.img, 360, 0.7); }
+}
 const selItem = () => ui.queue.find(it => it.id === ui.sel) || null;
+
+// ---------- 가림 편집 ----------
+// 사진 위를 끌어 가릴 곳을 더하고, 가린 칸을 누르면 지운다. 적용하면 다시 진단한다.
+function openEditor(it) {
+  if (!it || !window.Redact) return;
+  let dlg = $('redactDlg');
+  if (!dlg) {
+    dlg = document.createElement('dialog'); dlg.id = 'redactDlg'; dlg.className = 'redact';
+    dlg.innerHTML = `<div class="rhead"><div><h2>개인정보 가림 편집</h2><p class="small muted">사진 위를 끌어서 가릴 곳을 더하고, 가린 칸을 누르면 지웁니다. 원본 사진은 이 기기 밖으로 나가지 않습니다.</p></div></div>
+      <div class="rwrap"><canvas id="rc"></canvas></div>
+      <div class="actions"><button class="btn ghost" data-r="rot">↻ 90° 돌리기</button><button class="btn ghost" data-r="auto">자동으로 다시 찾기</button><button class="btn ghost" data-r="clear">가림 모두 지우기</button>
+        <span style="flex:1"></span><button class="btn ghost" data-r="cancel">취소</button><button class="btn ok" data-r="ok">적용</button></div>`;
+    document.body.appendChild(dlg);
+    const cv = dlg.querySelector('#rc');
+    let start = null, temp = null;
+    const pos = e => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
+    cv.addEventListener('pointerdown', e => { start = pos(e); temp = null; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointermove', e => { if (!start) return; const p = pos(e); temp = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }; drawEditor(temp); });
+    cv.addEventListener('pointerup', e => {
+      const ed = ui.edit; if (!ed || !start) return;
+      const p = pos(e);
+      if (temp && temp.w > 0.01 && temp.h > 0.005) ed.masks.push(temp);
+      else { const i = ed.masks.findIndex(m => p.x >= m.x && p.x <= m.x + m.w && p.y >= m.y && p.y <= m.y + m.h); if (i >= 0) ed.masks.splice(i, 1); }
+      start = null; temp = null; drawEditor();
+    });
+    dlg.addEventListener('click', e => {
+      const b = e.target.closest('[data-r]'); if (!b) return;
+      const ed = ui.edit; if (!ed) return;
+      const k = b.dataset.r;
+      if (k === 'rot') { ed.rot = (ed.rot + 90) % 360; ed.masks = []; prepEditor(); }
+      if (k === 'auto') { const a = Redact.analyze(ed.it.img); ed.rot = a.rot; ed.masks = a.masks; prepEditor(); }
+      if (k === 'clear') { ed.masks = []; drawEditor(); }
+      if (k === 'cancel') { ui.edit = null; dlg.close(); }
+      if (k === 'ok') {
+        const it2 = ed.it; it2.rot = ed.rot; it2.masks = ed.masks; paint(it2);
+        const had = it2.status === 'done' || it2.status === 'err';
+        if (had) { it2.status = 'wait'; it2.cur = null; }
+        ui.edit = null; dlg.close(); ui.sel = it2.id; renderDx();
+        toast(had ? '가림을 바꿨어요. 이 사진을 다시 진단해 주세요.' : `가림 ${it2.masks.length}곳을 적용했어요`);
+      }
+    });
+  }
+  ui.edit = { it, rot: it.rot, masks: it.masks.map(m => ({ ...m })) };
+  dlg.showModal(); prepEditor();
+}
+function prepEditor() {
+  const ed = ui.edit; const cv = $('rc');
+  ed.base = Redact.canvasOf(ed.it.img, ed.rot, 1100);
+  cv.width = ed.base.width; cv.height = ed.base.height;
+  drawEditor();
+}
+function drawEditor(temp) {
+  const ed = ui.edit; const cv = $('rc'); if (!ed || !ed.base) return;
+  const g = cv.getContext('2d'); g.drawImage(ed.base, 0, 0);
+  const W = cv.width, H = cv.height;
+  for (const m of ed.masks.concat(temp ? [temp] : [])) {
+    g.fillStyle = m === temp ? 'rgba(42,74,134,.35)' : 'rgba(43,47,54,.82)';
+    g.fillRect(m.x * W, m.y * H, m.w * W, m.h * H);
+    g.strokeStyle = '#7ea3e8'; g.lineWidth = Math.max(2, W / 400); g.setLineDash([8, 6]); g.strokeRect(m.x * W, m.y * H, m.w * W, m.h * H); g.setLineDash([]);
+  }
+}
 
 // ---------- 진단 ----------
 function problemOf(it) {
@@ -356,10 +426,11 @@ function renderDxForm() {
         <input type="file" id="file" accept="image/*" multiple aria-label="풀이 사진 선택 (여러 장 가능)">
         <span class="big">📷</span><b>${qn ? '사진 더 추가하기' : '사진 찍기 또는 파일 선택'}</b><span class="small">여러 장을 한꺼번에 고르거나 끌어다 놓아도 됩니다</span>
       </label>
+      <label class="toggle"><input type="checkbox" id="redact"${ui.redact ? ' checked' : ''}> 학원 이름·로고·학생 이름 자동으로 가리기</label>
     </div>
     ${qn ? queueHtml() : ''}
     <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : waiting > 1 ? `${waiting}장 모두 진단하기` : '진단하기'}</button>
-    <p class="privacy">사진은 진단에만 쓰이고 서버에 저장되지 않습니다. 학생 이름은 가리고 찍어 주세요.</p>`;
+    <p class="privacy">${ui.redact ? '시험지 머리글(학원 로고·시험 이름·학생 이름)과 바닥글은 이 기기에서 먼저 가린 뒤 전송합니다. ' : ''}사진은 진단에만 쓰이고 서버에 저장되지 않습니다.</p>`;
 }
 function queueHtml() {
   const stOpts = cur => S.students.map(x => `<option value="${esc(x)}"${x === cur ? ' selected' : ''}>${esc(x)}</option>`).join('') + (S.students.includes(cur) ? '' : `<option selected>${esc(cur)}</option>`);
@@ -375,7 +446,8 @@ function queueHtml() {
     return `<div class="qrow2${it.id === ui.sel ? ' on' : ''}" data-sel-item="${it.id}">
       <img src="${it.thumb}" alt="">
       <div class="qmeta"><select data-item-s="${it.id}" aria-label="학생"${it.status === 'run' || it.saved ? ' disabled' : ''}>${stOpts(it.s)}</select>
-        <span class="small muted">${q && q.unit ? q.id + '번' : '직접 입력'}</span></div>
+        <span class="small muted">${q && q.unit ? q.id + '번' : '직접 입력'}${it.masks.length ? ` · <span class="hid">가림 ${it.masks.length}곳</span>` : ''}</span>
+        ${it.saved || it.status === 'run' ? '' : `<button class="linkbtn" data-edit-item="${it.id}" type="button">가림 편집</button>`}</div>
       <div class="qstate">${st}</div>
       <button class="x" data-del-item="${it.id}" aria-label="이 사진 빼기" ${it.status === 'run' ? 'disabled' : ''}>×</button></div>`;
   }).join('');
@@ -454,7 +526,8 @@ function resultCard(it) {
       ${it.saved ? '<span class="done">✓ 진찰 기록과 오답 처방전에 반영했어요</span>' :
         `<button class="btn ok" data-act="confirm">진단 확인하고 반영</button>
          <button class="btn ghost" data-act="pick">${ui.pickLine ? '줄 고르기 취소' : '틀린 줄 다시 고르기'}</button>
-         <button class="btn ghost" data-act="again">다시 진단</button>`}${nav}
+         <button class="btn ghost" data-act="again">다시 진단</button>
+         <button class="btn ghost" data-edit-item="${it.id}">가림 편집</button>`}${nav}
     </div></div>`;
 }
 function renderSession() {
@@ -661,6 +734,8 @@ document.addEventListener('click', e => {
   const ln = e.target.closest('[data-line]');
   const it0 = selItem();
   if (ln && it0 && it0.cur && ui.pickLine) { it0.cur.rec.err = +ln.dataset.line; it0.cur.rec.fix = ''; ui.pickLine = false; renderDxOut(); return; }
+  const ed = e.target.closest('[data-edit-item]');
+  if (ed) { openEditor(ui.queue.find(x => x.id === ed.dataset.editItem)); return; }
   const del = e.target.closest('[data-del-item]');
   if (del) { ui.queue = ui.queue.filter(x => x.id !== del.dataset.delItem); if (ui.sel === del.dataset.delItem) ui.sel = ui.queue.length ? ui.queue[0].id : null; renderDx(); return; }
   const row = e.target.closest('[data-sel-item]');
@@ -699,6 +774,7 @@ document.addEventListener('change', e => {
   if (e.target.id === 'qsel') { ui.dx.qid = e.target.value === 'new' ? 'new' : +e.target.value; renderDxForm(); return; }
   if (e.target.id === 'ssel') { ui.dx.s = e.target.value; renderDxForm(); return; }
   if (e.target.id === 'file') { takeFiles(e.target.files); e.target.value = ''; return; }
+  if (e.target.id === 'redact') { ui.redact = e.target.checked; lsSet(STORE + '.redact', ui.redact ? '1' : '0'); renderDxForm(); return; }
   if (e.target.dataset.itemS) { const it = ui.queue.find(x => x.id === e.target.dataset.itemS); if (it) { it.s = e.target.value; if (it.cur) it.cur.rec.s = it.s; renderDx(); } return; }
   if (e.target.dataset.act === 'cause') { const it = selItem(); if (it && it.cur) { it.cur.rec.cause = e.target.value; renderDxOut(); renderDxForm(); } return; }
   const s = e.target.closest('select[data-sel]');

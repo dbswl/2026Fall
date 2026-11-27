@@ -50,7 +50,7 @@ function save() {
 const ui = {
   tab: 'dx', stu: 'A', showAll: false,
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
-  dx: { qid: 12, s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '', same: true }, newName: '' },
+  dx: { qid: 'sheet', s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '', same: true }, newName: '' },
   queue: [], sel: null, pickLine: false, running: false,
   redact: lsGet(STORE + '.redact') !== '0',   // 개인정보 자동 가리기 (기본 켬)
   edit: null                                   // 가림 편집 중인 사진
@@ -59,8 +59,9 @@ const ui = {
 const allQs = () => D.questions.concat(S.custom);
 const qOf = id => allQs().find(q => String(q.id) === String(id));
 const N = () => S.students.length;
-const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : q.sheet ? (/시험|평가|고사/.test(q.exam) ? q.exam : `${q.exam} 시험지`) : '직접 입력한 문항';
+const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : q.sheet ? [q.unitName, q.exam].filter(Boolean).join(' · ') : '직접 입력한 문항';
 const qNo = q => q.unit ? q.id + '번' : q.sheet ? (q.no === '전체' ? '문항 찾기' : q.no + '번') : '직접 입력';     // 짧은 문항 표시
+const qPre = q => q.unit ? q.id + '번 · ' : q.sheet ? q.no + '번 · ' : '';
 const qHead = q => q.unit ? q.id : q.sheet ? q.no : '직';                         // 채점표 머리
 const causeTag = k => k && D.causes[k] ? `<span class="tag ${k}">${D.causes[k].short}</span>` : '';
 const topNames = a => a.map(k => D.causes[k].name).join(' · ');
@@ -205,7 +206,8 @@ async function takeFiles(files) {
   renderDx();
 }
 function sheetSpec() {
-  const exam = (ui.dx.sheet.exam || '').trim() || '시험지';
+  const d = new Date();
+  const exam = (ui.dx.sheet.exam || '').trim() || `${d.getMonth() + 1}/${d.getDate()} 시험`;
   const nos = [...new Set((ui.dx.sheet.nos.match(/\d+/g) || []).map(n => String(+n)).filter(n => +n > 0 && +n < 200))];
   const raw = (ui.dx.sheet.ans || '').trim();
   const parts = raw ? raw.split(/[,，\/]|\s{2,}/).map(x => x.trim()).filter(Boolean) : [];
@@ -298,7 +300,7 @@ function problemOf(it) {
     const saved = qOf(it.qid);
     return { id: it.qid, sheet: true, exam: it.sheet.exam, no: it.sheet.no,
       text: it.sheet.text ? esc(it.sheet.text) : saved ? saved.text : '', ans: it.sheet.ans || (saved && saved.ans !== '-' ? saved.ans : ''),
-      topic: `${it.sheet.exam} ${it.sheet.no}번`, unit: 0, sim: saved && saved.sim };
+      topic: it.sheet.topic || (saved && saved.topic) || '유형 판단 전', unitName: it.sheet.unitName || (saved && saved.unitName) || '', unit: 0, sim: saved && saved.sim };
   }
   if (it.qid === 'new' || String(it.qid).startsWith('c') && it.q) return { id: it.qid, text: esc(it.q.text), ans: it.q.ans, topic: '직접 입력', unit: 0 };
   return qOf(it.qid);
@@ -348,6 +350,8 @@ async function diagnoseItem(it) {
   }
   if (it.sheet && mode === 'ai') {
     if (result.problem_text) it.sheet.text = String(result.problem_text);
+    if (result.topic) it.sheet.topic = String(result.topic).slice(0, 40);
+    if (result.unit) it.sheet.unitName = String(result.unit).slice(0, 30);
     if (!it.sheet.ans && result.correct_answer) { it.sheet.aiAns = String(result.correct_answer); }
     const g = result.question_region, ok = v => typeof v === 'number' && isFinite(v);
     it.region = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 && g.w <= 1.01 && g.h <= 1.01
@@ -380,7 +384,8 @@ async function scanItem(it, todo) {
       const hint = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 ? padBox(g, 0.03) : null;
       const x = { id: 'p' + (++seq), name: it.name, img: it.img, rot: it.rot, masks: it.masks, photo: it.photo, thumb: it.thumb, grp: it.grp,
         s: it.s, qid: sheetQid(it.sheet.exam, q.no), q: null, hint, region: hint, saved: false, cur: null,
-        sheet: { exam: it.sheet.exam, no: q.no, ans: (it.sheet.key || {})[q.no] || '', aiAns: q.correct_answer || '', text: '' } };
+        sheet: { exam: it.sheet.exam, no: q.no, ans: (it.sheet.key || {})[q.no] || '', aiAns: q.correct_answer || '', text: '',
+          topic: q.topic ? String(q.topic).slice(0, 40) : '', unitName: q.unit ? String(q.unit).slice(0, 30) : '' } };
       if (q.verdict === 'correct') {
         // 빠른 판정: 자세한 진단 없이 정답으로 표시 (선생님이 '다시 진단'으로 자세히 볼 수 있음)
         x.status = 'done'; x.quick = true;
@@ -446,12 +451,14 @@ function ensureQuestion(it) {
     const ans = it.sheet.ans || it.sheet.aiAns || '-';
     let q = S.custom.find(c => c.id === it.qid);
     if (!q) {
-      q = { id: it.qid, unit: 0, sheet: true, exam: it.sheet.exam, no: it.sheet.no, topic: `${it.sheet.exam} ${it.sheet.no}번`,
+      q = { id: it.qid, unit: 0, sheet: true, exam: it.sheet.exam, no: it.sheet.no, topic: it.sheet.topic || `${it.sheet.no}번 문항`, unitName: it.sheet.unitName || '',
         text: esc(it.sheet.text || `${it.sheet.no}번 문항`), ans, sim: (it.cur && it.cur.rec.sim) || { text: '-', ans: '-' }, hint: (it.cur && it.cur.rec.tip) || '' };
       S.custom.push(q);
     } else {
       if (it.sheet.text && (!q.text || /번 문항$/.test(q.text))) q.text = esc(it.sheet.text);
       if (q.ans === '-' && ans !== '-') q.ans = ans;
+      if (it.sheet.topic && /번 문항$/.test(q.topic)) q.topic = it.sheet.topic;
+      if (it.sheet.unitName && !q.unitName) q.unitName = it.sheet.unitName;
     }
     return it.qid;
   }
@@ -517,43 +524,40 @@ function codeBox() {
     <span class="privacy">코드가 없으면 샘플 반의 예시 결과로 체험할 수 있습니다.</span></div>`;
 }
 function renderDxForm() {
-  const q = ui.dx.qid === 'new' || ui.dx.qid === 'sheet' ? null : qOf(ui.dx.qid);
   const sh = ui.dx.sheet;
-  const qOpts = D.questions.map(x => `<option value="${x.id}"${String(x.id) === String(ui.dx.qid) ? ' selected' : ''}>${x.id}번 · ${esc(x.topic)}</option>`).join('') +
-    `<option value="sheet"${ui.dx.qid === 'sheet' ? ' selected' : ''}>+ 시험지 사진 (문항 자동으로 찾기)</option>` +
-    `<option value="new"${ui.dx.qid === 'new' ? ' selected' : ''}>+ 다른 문제 직접 입력</option>`;
   const sOpts = S.students.map(x => `<option value="${esc(x)}"${x === ui.dx.s ? ' selected' : ''}>학생 ${esc(x)}</option>`).join('') +
     `<option value="__new"${ui.dx.s === '__new' ? ' selected' : ''}>+ 새 학생</option>`;
   const waiting = ui.queue.filter(it => it.status === 'wait' || it.status === 'err').length;
   const qn = ui.queue.length;
+  const opened = sh.exam || sh.ans || sh.nos;
   $('dxForm').innerHTML = `
-    <div><h2>풀이 사진 진단</h2><p class="muted small">한 문항의 풀이가 보이게 찍은 사진을 올립니다. 반 전체 사진을 한꺼번에 올려도 됩니다.</p></div>
+    <div><h2>시험지 진단</h2><p class="muted small">채점한 시험지를 쪽마다 찍어 올리면, 문항을 찾아 문제 유형을 판단하고 틀린 문항의 풀이를 진단합니다.</p></div>
     ${codeBox()}
-    <div class="field"><label for="qsel"><span class="stepno">1</span>문항</label>
-      <select id="qsel"${ui.running ? ' disabled' : ''}>${qOpts}</select>
-      ${q ? `<div class="probbox">${q.text}<div class="a">정답 ${esc(q.ans)} · ${unitLabel(q)}</div></div>` :
-        ui.dx.qid === 'sheet' ? `<input type="text" id="sexam" placeholder="시험 이름 (선택, 예: 3분기 진단평가)" value="${esc(sh.exam)}">
-         <input type="text" id="snos" placeholder="문항 번호 (비워 두면 사진의 문항을 모두 찾음)" value="${esc(sh.nos)}" inputmode="numeric">
-         <input type="text" id="sans" placeholder="정답표 (선택, 예: 9:③, 12:⑤)" value="${esc(sh.ans)}">
-         <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}> 여러 장을 올리면 한 학생의 여러 쪽으로 보기</label>
-         <span class="privacy">시험지를 쪽마다 통째로 찍어 올리면, AI가 문항을 모두 찾아 정답·오답을 가르고 틀렸거나 애매한 문항만 자세히 진단합니다. 정답표가 없으면 AI가 직접 풀어 채점합니다.</span>` :
-        `<textarea id="ctext" placeholder="문제를 입력하세요">${esc(ui.dx.custom.text)}</textarea>
-         <input type="text" id="cans" placeholder="정답 (모르면 비워 두세요)" value="${esc(ui.dx.custom.ans)}">`}
-    </div>
-    <div class="field"><label for="ssel"><span class="stepno">2</span>학생 <span class="muted" style="font-weight:400">(여러 장이면 이 학생부터 차례로)</span></label>
+    <div class="field"><label for="ssel"><span class="stepno">1</span>학생</label>
       <select id="ssel">${sOpts}</select>
       ${ui.dx.s === '__new' ? `<input type="text" id="sname" placeholder="학생 이름 또는 번호" value="${esc(ui.dx.newName)}">` : ''}
+      <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}> 여러 장은 이 학생의 여러 쪽 <span class="muted">(끄면 학생을 차례로 배정)</span></label>
     </div>
-    <div class="field"><span class="lab"><span class="stepno">3</span>풀이 사진</span>
+    <div class="field"><span class="lab"><span class="stepno">2</span>시험지 사진</span>
       <label class="drop" id="drop">
-        <input type="file" id="file" accept="image/*" multiple aria-label="풀이 사진 선택 (여러 장 가능)">
+        <input type="file" id="file" accept="image/*" multiple aria-label="시험지 사진 선택 (여러 장 가능)">
         <span class="big">📷</span><b>${qn ? '사진 더 추가하기' : '사진 찍기 또는 파일 선택'}</b><span class="small">여러 장을 한꺼번에 고르거나 끌어다 놓아도 됩니다</span>
       </label>
       <label class="toggle"><input type="checkbox" id="redact"${ui.redact ? ' checked' : ''}> 학원 이름·로고·학생 이름 자동으로 가리기</label>
     </div>
+    <details class="opt"${opened ? ' open' : ''}><summary>선택 사항: 시험 이름 · 정답표 · 특정 문항만</summary>
+      <input type="text" id="sexam" placeholder="시험 이름 (비우면 오늘 날짜)" value="${esc(sh.exam)}">
+      <input type="text" id="sans" placeholder="정답표 (예: 9:③, 12:⑤) · 비우면 AI가 직접 풀어 채점" value="${esc(sh.ans)}">
+      <input type="text" id="snos" placeholder="이 번호만 진단 (예: 9, 12) · 비우면 모든 문항" value="${esc(sh.nos)}" inputmode="numeric">
+    </details>
     ${qn ? queueHtml() : ''}
     <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : waiting > 1 ? `${waiting}건 모두 진단하기` : '진단하기'}</button>
     <p class="privacy">${ui.redact ? '시험지 머리글(학원 로고·시험 이름·학생 이름)과 바닥글은 이 기기에서 먼저 가린 뒤 전송합니다. ' : ''}사진은 진단에만 쓰이고 서버에 저장되지 않습니다.</p>`;
+}
+function qHeadline() {
+  const photos = new Set(ui.queue.map(it => it.grp || it.id)).size;
+  const qs = ui.queue.filter(it => !it.scan).length;
+  return `올린 사진 ${photos}장` + (qs && qs !== photos ? ` · 문항 ${qs}개` : '');
 }
 function queueHtml() {
   const stOpts = cur => S.students.map(x => `<option value="${esc(x)}"${x === cur ? ' selected' : ''}>${esc(x)}</option>`).join('') + (S.students.includes(cur) ? '' : `<option selected>${esc(cur)}</option>`);
@@ -574,7 +578,7 @@ function queueHtml() {
       <div class="qstate">${st}</div>
       <button class="x" data-del-item="${it.id}" aria-label="이 사진 빼기" ${it.status === 'run' ? 'disabled' : ''}>×</button></div>`;
   }).join('');
-  return `<div class="queue"><div class="qhead"><b>올린 사진 ${ui.queue.length}장</b><button class="linkbtn" data-act="clearq" type="button" ${ui.running ? 'disabled' : ''}>모두 비우기</button></div>${rows}</div>`;
+  return `<div class="queue"><div class="qhead"><b>${qHeadline()}</b><button class="linkbtn" data-act="clearq" type="button" ${ui.running ? 'disabled' : ''}>모두 비우기</button></div>${rows}</div>`;
 }
 function renderDxOut() {
   const out = $('dxOut'); if (!out) return;
@@ -609,13 +613,13 @@ function renderDxOut() {
     card = `<div class="card empty">
       <div><h2>진단서</h2><p class="muted small">진단하면 여기에 결과가 나옵니다.</p></div>
       <ol><li>학생이 쓴 풀이를 한 줄씩 옮겨 적고</li><li>처음 틀린 줄에 빨간 물결을 긋고</li><li>원인을 개념 부족 · 계산 실수 · 문제 오독 · 풀이 전략 오류 중 하나로 진단합니다.</li></ol>
-      <p class="small muted">${aiOn() ? 'AI가 내린 진단은 제안이고, 선생님이 확인해야 기록에 반영됩니다.' : '지금은 <b>데모 모드</b>입니다. 사진을 올리면 샘플 반의 예시 결과를 보여 줍니다.'}</p></div>`;
+      <p class="small muted">${aiOn() ? 'AI가 내린 진단은 제안이고, 선생님이 확인해야 기록에 반영됩니다.' : ui.ai && ui.needCode ? '체험 코드를 넣으면 시험지를 실제로 진단할 수 있습니다.' : 'AI가 연결되지 않아 지금은 진단할 수 없습니다.'}</p></div>`;
   }
   out.innerHTML = top + card;
 }
 function resultCard(it) {
   const cur = it.cur; const r = cur.rec; const q = problemOf(it);
-  const head = `<div class="res-head"><div><h2>학생 ${esc(it.s)} · ${q.topic ? esc(q.topic) : ''}</h2>
+  const head = `<div class="res-head"><div><h2>학생 ${esc(it.s)} · ${qPre(q)}${q.topic ? esc(q.topic) : ''}</h2>
       <p class="muted small">${q.unit ? q.id + '번 · ' + unitLabel(q) : unitLabel(q)}${ui.queue.length > 1 ? ` · ${ui.queue.indexOf(it) + 1}번째` : ''}</p></div>
       <div class="meta">${cur.mode === 'ai' ? '<span class="badge ai">AI 진단</span>' : '<span class="badge demo">데모 모드 · 예시 결과</span>'}
       ${!cur.correct ? `<span class="badge ${r.conf < LOW ? 'low' : 'ai'}">신뢰도 ${pct(r.conf)}%</span>` : ''}</div></div>`;
@@ -670,7 +674,7 @@ function renderSession() {
     <div class="actions"><button class="btn ghost" data-go="brief">진찰 기록 보기</button><button class="btn ghost" data-go="stu">처방전 보기</button></div></div>
     <div class="session">${S.session.slice(0, 12).map(x => { const q = qOf(x.q); return `<div class="row">
       ${x.thumb ? `<img src="${x.thumb}" alt="">` : '<span></span>'}
-      <div><b>학생 ${esc(x.s)}</b> · ${q ? (q.unit ? q.id + '번 ' : '') + esc(q.topic) : ''} <span class="small muted">${x.mode === 'ai' ? 'AI 진단' : '예시 진단'}</span></div>
+      <div><b>학생 ${esc(x.s)}</b> · ${q ? qPre(q) + esc(q.topic) : ''} <span class="small muted">${x.mode === 'ai' ? 'AI 진단' : '예시 진단'}</span></div>
       <div>${x.correct ? '<span class="done">정답</span>' : causeTag(x.cause)}</div></div>`; }).join('')}</div>`;
 }
 
@@ -692,7 +696,7 @@ function renderVersus() {
     <div><h2>같은 문항, 다른 원인</h2><p class="muted small">${o.q.unit ? o.q.id + '번(' + unitLabel(o.q) + ')' : esc(o.q.topic)}에서 ${o.n}명이 틀렸습니다. 풀이를 읽으면 원인이 ${o.kinds}가지로 나뉩니다. 빨간 물결은 학생이 처음 틀린 줄입니다.</p></div>
     <div class="versus">
       <div class="old"><span class="small muted">정답·오답만 보는 오답노트</span>
-        <span class="big">${o.q.unit ? o.q.id + '번 ' : ''}${esc(o.q.topic)} · ${o.n}명 오답</span>
+        <span class="big">${qPre(o.q)}${esc(o.q.topic)} · ${o.n}명 오답</span>
         <span class="small">"${o.q.unit ? D.units[o.q.unit] : '이 문항'} 단원이 약함"으로 묶고, 같은 단원 문제를 ${o.n}명 모두에게 더 풀게 합니다.</span></div>
       <div class="new"><span class="small muted">풀이 한 줄을 읽는 한 줄 진단 (원인별 처방)</span>${groups}</div>
     </div></div>`;
@@ -712,7 +716,7 @@ function renderBrief() {
   const orderHtml = order.map(o => {
     const share = o.n ? o.by[o.top[0]] / o.n : 0;
     const mode = share >= 0.6 ? `<b>반 전체 설명</b> 대부분 ${topNames(o.top)}(${o.by[o.top[0]]}/${o.n}명)` : `<b>원인이 갈림</b> ${CK.filter(k => o.by[k] > 0).map(k => D.causes[k].short + ' ' + o.by[k]).join(', ')} → 학생별로 다르게 지도`;
-    return `<li><div><b>${o.q.unit ? o.q.id + '번 · ' : ''}${esc(o.q.topic)}</b> <span class="muted num">${o.n}/${o.takers}명 오답 (${pct(o.rate)}%)</span>
+    return `<li><div><b>${qPre(o.q)}${esc(o.q.topic)}</b> <span class="muted num">${o.n}/${o.takers}명 오답 (${pct(o.rate)}%)</span>
       <div class="small muted">${unitLabel(o.q)}</div>
       <div class="small">${mode}</div>
       ${o.q.hint ? `<div class="small"><b>설명 포인트</b> ${esc(o.q.hint)}</div>` : ''}</div></li>`;
@@ -760,7 +764,7 @@ function renderStu() {
     const sim = r.sim || q.sim;
     return `<div class="item">
       <div class="side">
-        <div><b>${q.unit ? q.id + '번 · ' : ''}${esc(q.topic)}</b> <span class="small muted">${unitLabel(q)}</span> ${srcTag(r)}</div>
+        <div><b>${qPre(q)}${esc(q.topic)}</b> <span class="small muted">${unitLabel(q)}</span> ${srcTag(r)}</div>
         <div class="prob muted">${q.text}</div>
         ${workBox(r)}
         <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 <b>${esc(q.ans)}</b></span></div>

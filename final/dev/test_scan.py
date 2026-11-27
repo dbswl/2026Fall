@@ -4,10 +4,10 @@ from playwright.async_api import async_playwright
 BASE = 'http://localhost:3999'
 calls = []
 SCAN = {'questions': [
-  {'no': '9', 'region': {'x': .05, 'y': .14, 'w': .45, 'h': .17}, 'student_answer': '② -2', 'correct_answer': '③ -1', 'verdict': 'wrong', 'note': '답이 다름'},
-  {'no': '10', 'region': {'x': .05, 'y': .31, 'w': .45, 'h': .15}, 'student_answer': '① -8/3', 'correct_answer': '① -8/3', 'verdict': 'correct', 'note': '고른 답이 정답과 같음'},
-  {'no': '12', 'region': {'x': .05, 'y': .6, 'w': .45, 'h': .12}, 'student_answer': '⑤ 6', 'correct_answer': '⑤ 6', 'verdict': 'unsure', 'note': '표시가 두 개'},
-  {'no': '14', 'region': {'x': .5, 'y': .14, 'w': .45, 'h': .15}, 'student_answer': '③ 12', 'correct_answer': '③ 12', 'verdict': 'correct', 'note': '정답'}]}
+  {'no': '9', 'region': {'x': .05, 'y': .14, 'w': .45, 'h': .17}, 'student_answer': '② -2', 'correct_answer': '③ -1', 'verdict': 'wrong', 'topic': '계수가 소수인 일차방정식', 'unit': '일차방정식', 'note': '답이 다름'},
+  {'no': '10', 'region': {'x': .05, 'y': .31, 'w': .45, 'h': .15}, 'student_answer': '① -8/3', 'correct_answer': '① -8/3', 'verdict': 'correct', 'topic': '해가 없는 방정식', 'unit': '일차방정식', 'note': '고른 답이 정답과 같음'},
+  {'no': '12', 'region': {'x': .05, 'y': .6, 'w': .45, 'h': .12}, 'student_answer': '⑤ 6', 'correct_answer': '⑤ 6', 'verdict': 'unsure', 'topic': '순서쌍', 'unit': '좌표평면과 그래프', 'note': '표시가 두 개'},
+  {'no': '14', 'region': {'x': .5, 'y': .14, 'w': .45, 'h': .15}, 'student_answer': '③ 12', 'correct_answer': '③ 12', 'verdict': 'correct', 'topic': '반비례 관계식', 'unit': '정비례와 반비례', 'note': '정답'}]}
 def diag(no, ok):
     return dict(question_found=True, problem_text=f'{no}. (사진에서 읽은 문제)', correct_answer='③ -1' if no == '9' else '⑤ 6',
         transcribed_lines=['7x-3=5x+13', '2x=16, x=8'] if no == '9' else ['a-2=4-a', 'a=3', 'b=3', 'a+b=6'], student_answer='② -2' if no == '9' else '⑤ 6',
@@ -27,8 +27,8 @@ async def main():
         errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
         await pg.route('https://fonts.googleapis.com/**', lambda r: r.abort()); await pg.route('**/api/diagnose', handle)
         await pg.goto(BASE + '/app.html'); await pg.evaluate('localStorage.clear()'); await pg.reload(); await pg.wait_for_timeout(800)
-        await pg.click('#t-dx'); await pg.select_option('#qsel', 'sheet'); await pg.select_option('#ssel', 'C')
-        await pg.fill('#sans', '9:③')
+        await pg.click('#t-dx'); await pg.select_option('#ssel', 'C')
+        await pg.click('details.opt summary'); await pg.fill('#sans', '9:③')
         await pg.set_input_files('#file', ['dev/real/p2.png', 'dev/real/p3.png']); await pg.wait_for_timeout(1000)
         print('before:', [t.replace('\n', ' ') for t in await pg.locator('.qrow2').all_inner_texts()])
         print('go:', await pg.text_content('#go'))

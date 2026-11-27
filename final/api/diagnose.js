@@ -51,6 +51,8 @@ const TOOL = {
       question_found: { type: 'boolean', description: '문항 번호로 요청했을 때 사진에서 그 문항을 찾았는지 (문제를 직접 준 경우 true)' },
       problem_text: { type: 'string', description: '문항 번호로 요청했을 때 사진에서 읽은 문제 (보기 포함). 문제를 직접 준 경우 빈 문자열' },
       correct_answer: { type: 'string', description: '정답 (주어진 정답 또는 직접 푼 답)' },
+      topic: { type: 'string', description: '문제 유형을 짧게 (예: 일차방정식의 활용 - 거리·속력·시간)' },
+      unit: { type: 'string', description: '중등 수학 단원 이름 (예: 일차방정식)' },
       question_region: {
         type: 'object', description: '문항 번호로 요청했을 때, 사진 전체를 0~1로 볼 때 그 문항(문제와 학생 풀이 전체)이 차지하는 직사각형. x,y는 왼쪽 위 모서리',
         properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } }
@@ -75,6 +77,8 @@ const SCAN_SYSTEM = `당신은 학원 수학 강사의 채점을 돕는 도우�
 - correct_answer: 직접 풀어 본 정답 (정답표가 주어지면 그 값)
 - verdict: 학생 답이 정답과 같으면 correct, 다르면 wrong, 답을 읽기 어렵거나 풀이가 확실하지 않으면 unsure
   선생님의 채점 표시(빨간 동그라미·빗금·체크)는 참고만 하고, 판단은 답의 내용으로 합니다. 조금이라도 의심되면 unsure로 둡니다.
+- topic: 문제 유형을 짧게 (예: "일차방정식의 활용 - 거리·속력·시간", "정비례와 반비례 그래프")
+- unit: 중등 수학 단원 이름 (예: "일차방정식", "좌표평면과 그래프", "정수와 유리수")
 - note: 판정 근거 한 문장`;
 const SCAN_TOOL = {
   name: 'submit_page',
@@ -92,6 +96,8 @@ const SCAN_TOOL = {
             student_answer: { type: 'string' },
             correct_answer: { type: 'string' },
             verdict: { type: 'string', enum: ['correct', 'wrong', 'unsure'] },
+            topic: { type: 'string' },
+            unit: { type: 'string' },
             note: { type: 'string' }
           },
           required: ['no', 'student_answer', 'verdict']

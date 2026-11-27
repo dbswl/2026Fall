@@ -230,3 +230,14 @@ dialog.redact canvas{max-width:100%;max-height:68vh;width:auto;height:auto;curso
 .photo{position:relative} .cropnote{position:absolute;left:6px;bottom:6px;font-size:.72rem;background:rgba(24,33,45,.75);color:#fff;padding:2px 7px;border-radius:999px}
 details.opt{border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:.86rem}
 details.opt summary{cursor:pointer;color:var(--muted)} details.opt[open]{display:flex;flex-direction:column;gap:6px} details.opt[open] summary{margin-bottom:2px}
+/* 반 만들기·관리 */
+.grpPick{display:inline-flex} .grpPick select.pill{appearance:auto;cursor:pointer;font:inherit;font-size:.82rem;max-width:min(62vw,340px);padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.card.onboard{max-width:720px;margin:0 auto;width:100%}
+.stugrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px}
+.stugrid input{text-align:center;padding:7px 6px;font-size:.9rem}
+.stugrid.edit{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+.srow{display:flex;gap:4px;align-items:center} .srow input{flex:1;min-width:0}
+.srow .x{border:0;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer}
+.btn.danger{color:var(--wrong);border-color:var(--wrong)}
+.field .lab{display:flex;align-items:center;gap:8px;flex-wrap:wrap}

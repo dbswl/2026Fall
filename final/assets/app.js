@@ -1,7 +1,7 @@
 /* 한 줄 진단: 선생님 화면
    - 새 진단: 풀이 사진(한 장 또는 여러 장) → /api/diagnose (Claude) → 진단서 → 선생님 확인 → 기록 반영
-   - 진찰 기록 / 오답 처방전 / 진단서 확인: 반 전체 기록 (샘플 반 + 새로 진단한 풀이)
-   - AI 키·체험 코드가 없거나 서버가 없으면 데모 모드(샘플 반의 예시 결과)로 동작한다 */
+   - 진찰 기록 / 오답 처방전 / 진단서 확인: 선생님이 만든 반의 기록 (반은 여러 개, 반마다 따로 저장)
+   - 처음에는 반이 없고, 반 이름·학생 수를 정해 만든 뒤 시작한다 */
 (function () {
 'use strict';
 
@@ -16,39 +16,47 @@ const emptyBy = () => ({ C: 0, K: 0, R: 0, S: 0 });
 const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
 
-// ---------- 상태 ----------
-function freshState() {
+// ---------- 상태: 반(그룹) ----------
+// 기록은 반마다 따로 둔다. 처음에는 반이 없고, 선생님이 반 이름과 학생 수를 정해 만든다.
+const DBKEY = 'handline.groups';
+const autoName = i => i < 26 ? String.fromCharCode(65 + i) : String.fromCharCode(65 + Math.floor(i / 26) - 1) + String.fromCharCode(65 + i % 26);
+function emptyGroup(name, students) {
+  const graded = {}; students.forEach(x => { graded[x] = []; });
+  return { id: 'g' + Date.now().toString(36), name, students: students.slice(), recs: [], custom: [], graded, session: [] };
+}
+function sampleGroup() {
+  // 둘러보기용 샘플 반 (가상의 학생 8명, 16문항 숙제)
   const graded = {};
-  D.students.forEach(s => { graded[s] = D.questions.map(q => String(q.id)); });
-  return {
-    recs: D.records.map((r, i) => ({ ...r, id: 's' + i, confirmed: false, byTeacher: false, src: 'sample' })),
-    custom: [],                 // 직접 입력한 문항
-    students: D.students.slice(),
-    graded,                     // 학생별로 채점·진단한 문항 (점수 계산의 분모)
-    session: []                 // 이번에 진단해 반영한 풀이 (최근 순)
-  };
+  D.students.forEach(x => { graded[x] = D.questions.map(q => String(q.id)); });
+  return { id: 'g' + Date.now().toString(36), name: `샘플 반 (${D.exam.cls})`, sample: true, students: D.students.slice(),
+    recs: D.records.map((r, i) => ({ ...r, id: 's' + i, confirmed: false, byTeacher: false, src: 'sample' })), custom: [], graded, session: [] };
 }
-function load() {
+function loadDB() {
   try {
-    const j = JSON.parse(lsGet(STORE) || 'null');
-    if (!j || !j.recs) return null;
-    if (!j.graded) {            // 이전 버전 저장분: 채점 문항 목록을 기록에서 다시 만든다
-      j.graded = {};
-      j.students.forEach(s => { j.graded[s] = D.students.includes(s) ? D.questions.map(q => String(q.id)) : []; });
-      j.recs.forEach(r => { const g = j.graded[r.s] || (j.graded[r.s] = []); if (!g.includes(String(r.q))) g.push(String(r.q)); });
-    }
-    return j;
-  } catch (e) { return null; }
+    const j = JSON.parse(lsGet(DBKEY) || 'null');
+    if (j && Array.isArray(j.groups)) return j;
+  } catch (e) { }
+  return { cur: null, groups: [] };
 }
-let S = load() || freshState();
+let DB = loadDB();
+let S = DB.groups.find(g => g.id === DB.cur) || DB.groups[0] || null;
+try { localStorage.removeItem(STORE); } catch (e) { }   // 예전 버전(샘플 반 기본) 저장분은 쓰지 않는다
 function save() {
-  if (lsSet(STORE, JSON.stringify(S))) return;
+  if (S) DB.cur = S.id;
+  if (lsSet(DBKEY, JSON.stringify(DB))) return;
   // 저장 공간이 부족하면 사진 미리보기를 빼고 다시 시도
-  lsSet(STORE, JSON.stringify({ ...S, recs: S.recs.map(r => ({ ...r, photo: null })), session: S.session.map(x => ({ ...x, thumb: null })) }));
+  lsSet(DBKEY, JSON.stringify({ ...DB, groups: DB.groups.map(g => ({ ...g, recs: g.recs.map(r => ({ ...r, photo: null })), session: g.session.map(x => ({ ...x, thumb: null })) })) }));
+}
+function useGroup(g) {
+  S = g; DB.cur = g.id; save();
+  ui.queue = []; ui.sel = null; ui.onboard = false;
+  ui.stu = g.students[0]; ui.dx.s = g.students[0];
+  show(ui.tab === 'new' ? 'dx' : ui.tab);
 }
 
 const ui = {
-  tab: 'dx', stu: 'A', showAll: false,
+  tab: 'dx', stu: 'A', showAll: false, onboard: false,
+  newG: { name: '', count: 8, names: [] },     // 새 반 만들기 입력
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
   dx: { qid: 'sheet', s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '', same: true }, newName: '' },
   queue: [], sel: null, pickLine: false, running: false,
@@ -56,7 +64,7 @@ const ui = {
   edit: null                                   // 가림 편집 중인 사진
 };
 
-const allQs = () => D.questions.concat(S.custom);
+const allQs = () => (S && S.sample ? D.questions : []).concat(S ? S.custom : []);
 const qOf = id => allQs().find(q => String(q.id) === String(id));
 const N = () => S.students.length;
 const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : q.sheet ? [q.unitName, q.exam].filter(Boolean).join(' · ') : '직접 입력한 문항';
@@ -118,8 +126,8 @@ async function checkAI() {
   const on = aiOn();
   el.className = 'status ' + (on ? 'on' : 'demo');
   el.textContent = on ? 'AI 연결됨' : (ui.ai && ui.needCode ? '체험 코드 필요' : '데모 모드');
-  el.title = on ? 'Claude가 실제로 풀이 사진을 읽고 진단합니다' : ui.ai ? '체험 코드를 넣으면 실제 AI 진단을 쓸 수 있습니다' : 'AI 키가 설정되지 않아 샘플 반의 예시 결과를 보여 줍니다';
-  if (ui.tab === 'dx') renderDx();
+  el.title = on ? 'Claude가 실제로 시험지를 읽고 진단합니다' : ui.ai ? '체험 코드를 넣으면 실제 AI 진단을 쓸 수 있습니다' : 'AI 키가 설정되지 않아 진단할 수 없습니다';
+  if (S && !ui.onboard && ui.tab === 'dx') renderDx();
 }
 async function submitCode(v) {
   ui.code = v.trim(); lsSet(STORE + '.code', ui.code);
@@ -521,7 +529,7 @@ function codeBox() {
   if (!(ui.ai && ui.needCode && !ui.codeOk)) return '';
   return `<div class="field codebox"><label for="code">체험 코드</label>
     <div style="display:flex;gap:6px"><input type="text" id="code" placeholder="실제 AI 진단용 코드" value="${esc(ui.code)}" autocomplete="off"><button class="btn ghost" data-act="code" type="button">확인</button></div>
-    <span class="privacy">코드가 없으면 샘플 반의 예시 결과로 체험할 수 있습니다.</span></div>`;
+    <span class="privacy">체험 코드는 발표·시연 때 안내합니다.</span></div>`;
 }
 function renderDxForm() {
   const sh = ui.dx.sheet;
@@ -536,7 +544,7 @@ function renderDxForm() {
     <div class="field"><label for="ssel"><span class="stepno">1</span>학생</label>
       <select id="ssel">${sOpts}</select>
       ${ui.dx.s === '__new' ? `<input type="text" id="sname" placeholder="학생 이름 또는 번호" value="${esc(ui.dx.newName)}">` : ''}
-      <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}> 여러 장은 이 학생의 여러 쪽 <span class="muted">(끄면 학생을 차례로 배정)</span></label>
+      <label class="toggle"><input type="checkbox" id="ssame"${sh.same ? ' checked' : ''}><span>여러 장은 이 학생의 여러 쪽 <span class="muted">(끄면 학생을 차례로 배정)</span></span></label>
     </div>
     <div class="field"><span class="lab"><span class="stepno">2</span>시험지 사진</span>
       <label class="drop" id="drop">
@@ -702,6 +710,11 @@ function renderVersus() {
     </div></div>`;
 }
 function renderBrief() {
+  if (!S.recs.length && !Object.values(S.graded).some(g => g.length)) {
+    $('p-brief').innerHTML = `<div class="card empty"><div><h2>아직 진단한 시험지가 없습니다</h2><p class="muted small">"새 진단"에서 시험지를 올리고 진단을 반영하면, 반 평균·문항별 오답률·오답 원인 분포가 여기에 쌓입니다.</p></div>
+      <div class="actions"><button class="btn" data-go="dx">시험지 올리러 가기</button></div></div>`;
+    return;
+  }
   const qs = allQs().map(qStat).filter(o => o.takers > 0);
   const ss = S.students.map(sStat);
   const scored = ss.filter(x => x.score != null);
@@ -782,16 +795,21 @@ function renderStu() {
     <div class="chips" role="group" aria-label="학생 선택">${chips}</div>
     <div class="card">
       <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
-        <div><h2>학생 ${esc(s)} 오답 처방전</h2><p class="muted small num">${D.exam.title} · ${scoreTxt} · 오답 ${st.rs.length}문항${st.rs.length ? ' · ' + CK.filter(k => st.by[k] > 0).map(k => D.causes[k].short + ' ' + st.by[k]).join(', ') : ''}</p></div>
+        <div><h2>학생 ${esc(s)} 오답 처방전</h2><p class="muted small num">${esc(S.name)} · ${scoreTxt} · 오답 ${st.rs.length}문항${st.rs.length ? ' · ' + CK.filter(k => st.by[k] > 0).map(k => D.causes[k].short + ' ' + st.by[k]).join(', ') : ''}</p></div>
         ${st.rs.length ? '<button class="btn ghost" data-act="print">인쇄하기</button>' : ''}
       </div>
       ${st.rs.length ? `<div class="note"><b>가장 먼저 고칠 것</b><br>${focus}. ${st.top.map(k => D.causes[k].tip).join(' ')}</div>
-      <div style="display:flex;flex-direction:column;gap:12px">${items}</div>` : `<p>틀린 문항이 없습니다.</p>`}
+      <div style="display:flex;flex-direction:column;gap:12px">${items}</div>` : st.graded ? `<p>틀린 문항이 없습니다.</p>` : `<p class="muted">아직 진단한 시험지가 없습니다.</p>`}
     </div>`;
 }
 
 // ---------- 진단서 확인 ----------
 function renderChk() {
+  if (!allQs().length) {
+    $('p-chk').innerHTML = `<div class="card empty"><div><h2>채점표가 비어 있습니다</h2><p class="muted small">시험지를 진단해 반영하면 학생 × 문항 채점표와 확인할 진단서가 여기에 나옵니다.</p></div>
+      <div class="actions"><button class="btn" data-go="dx">시험지 올리러 가기</button></div></div>`;
+    return;
+  }
   const recs = [...S.recs].sort((a, b) => a.conf - b.conf);
   const list = recs.filter(r => ui.showAll || (r.conf < LOW && !r.confirmed));
   const qs = allQs();
@@ -828,16 +846,112 @@ function renderChk() {
     </div>`;
 }
 
+// ---------- 새 반 만들기 ----------
+function newNames() {
+  const g = ui.newG;
+  g.names = Array.from({ length: g.count }, (_, i) => g.names[i] != null ? g.names[i] : autoName(i));
+  return g.names;
+}
+function renderNew() {
+  const g = ui.newG; const names = newNames();
+  const counts = Array.from({ length: 40 }, (_, i) => i + 1).map(n => `<option value="${n}"${n === g.count ? ' selected' : ''}>${n}명</option>`).join('');
+  $('p-new').innerHTML = `<div class="card onboard">
+    <div><h2>${DB.groups.length ? '새 반 만들기' : '반을 만들고 시작하세요'}</h2>
+      <p class="muted small">반 이름과 학생 수를 정하면 학생 이름이 A부터 자동으로 붙습니다. 이름은 아래에서 바로 고칠 수 있고, 나중에 "반 관리"에서도 바꿀 수 있습니다.</p></div>
+    <div class="field"><label for="gName"><span class="stepno">1</span>반 이름</label>
+      <input type="text" id="gName" placeholder="예: 중1 A반 (월·수 7시)" value="${esc(g.name)}" maxlength="30"></div>
+    <div class="field"><label for="gCount"><span class="stepno">2</span>학생 수</label>
+      <select id="gCount">${counts}</select></div>
+    <div class="field"><span class="lab"><span class="stepno">3</span>학생 이름 <button class="linkbtn" id="gAuto" type="button">A부터 다시 붙이기</button></span>
+      <div class="stugrid">${names.map((n, i) => `<input type="text" data-gi="${i}" value="${esc(n)}" maxlength="12" aria-label="${i + 1}번째 학생 이름">`).join('')}</div>
+      <span class="privacy">실명 대신 이니셜이나 번호를 쓰기를 권합니다. 기록은 이 브라우저에만 저장됩니다.</span></div>
+    <div class="actions"><button class="btn ok" id="gCreate" type="button">반 만들기</button>
+      ${S ? '<button class="btn ghost" id="gCancel" type="button">취소</button>' : ''}</div>
+    ${DB.groups.some(x => x.sample) ? '' : `<p class="small muted">먼저 둘러보고 싶다면 <button class="linkbtn" id="gSample" type="button">샘플 반 열어 보기</button> (가상의 학생 8명 기록)</p>`}
+  </div>`;
+}
+function checkNames(list) {
+  const t = list.map(x => String(x || '').trim());
+  if (t.some(x => !x)) return '비어 있는 학생 이름이 있어요';
+  const dup = t.find((x, i) => t.indexOf(x) !== i);
+  if (dup) return `학생 이름 "${dup}"이(가) 겹쳐요`;
+  return '';
+}
+function createGroup() {
+  const g = ui.newG; const names = newNames().map(x => x.trim());
+  const name = g.name.trim();
+  if (!name) { toast('반 이름을 적어 주세요'); $('gName').focus(); return; }
+  if (DB.groups.some(x => x.name === name)) { toast('같은 이름의 반이 이미 있어요'); return; }
+  const bad = checkNames(names); if (bad) { toast(bad); return; }
+  const grp = emptyGroup(name, names);
+  DB.groups.push(grp); ui.newG = { name: '', count: 8, names: [] };
+  useGroup(grp); show('dx');
+  toast(`${name} (${names.length}명)을 만들었어요. 시험지를 올려 보세요.`);
+}
+
+// ---------- 반 관리 (이름·학생 고치기, 반 삭제) ----------
+function openGroupDlg() {
+  if (!S) return;
+  let dlg = $('grpDlg');
+  if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'grpDlg'; dlg.className = 'redact'; document.body.appendChild(dlg); }
+  ui.gEdit = { name: S.name, rows: S.students.map(x => ({ orig: x, name: x })) };
+  drawGroupDlg(); dlg.showModal();
+}
+function drawGroupDlg() {
+  const e = ui.gEdit; const dlg = $('grpDlg');
+  const cnt = o => o ? S.recs.filter(r => r.s === o).length : 0;
+  dlg.innerHTML = `<div class="rhead"><h2>반 관리</h2><p class="small muted">이름을 바꾸면 그 학생의 기록도 함께 옮겨집니다.</p></div>
+    <div class="field"><label for="geName">반 이름</label><input type="text" id="geName" value="${esc(e.name)}" maxlength="30"></div>
+    <div class="field"><span class="lab">학생 ${e.rows.length}명</span>
+      <div class="stugrid edit">${e.rows.map((r, i) => `<div class="srow"><input type="text" data-ge="${i}" value="${esc(r.name)}" maxlength="12" aria-label="학생 이름">
+        <button class="x" data-gdel="${i}" type="button" aria-label="학생 빼기" title="${cnt(r.orig) ? '기록 ' + cnt(r.orig) + '건' : ''}">×</button></div>`).join('')}</div>
+      <button class="linkbtn" data-gact="add" type="button">+ 학생 추가</button></div>
+    <div class="actions"><button class="btn ghost danger" data-gact="delgroup" type="button">이 반 삭제</button><span style="flex:1"></span>
+      <button class="btn ghost" data-gact="cancel" type="button">취소</button><button class="btn ok" data-gact="save" type="button">저장</button></div>`;
+}
+function saveGroupDlg() {
+  const e = ui.gEdit;
+  const name = e.name.trim(); if (!name) { toast('반 이름을 적어 주세요'); return; }
+  if (DB.groups.some(x => x !== S && x.name === name)) { toast('같은 이름의 반이 이미 있어요'); return; }
+  if (!e.rows.length) { toast('학생이 한 명 이상 있어야 해요'); return; }
+  const bad = checkNames(e.rows.map(r => r.name)); if (bad) { toast(bad); return; }
+  const removed = S.students.filter(x => !e.rows.some(r => r.orig === x));
+  const lost = S.recs.filter(r => removed.includes(r.s)).length;
+  if (lost && !confirm(`뺀 학생의 진단 기록 ${lost}건도 함께 지워집니다. 저장할까요?`)) return;
+  const map = {}; e.rows.forEach(r => { if (r.orig) map[r.orig] = r.name.trim(); });
+  const ren = x => map[x] || x;
+  S.recs = S.recs.filter(r => !removed.includes(r.s)).map(r => ({ ...r, s: ren(r.s) }));
+  S.session = S.session.filter(x => !removed.includes(x.s)).map(x => ({ ...x, s: ren(x.s) }));
+  const graded = {}; e.rows.forEach(r => { graded[r.name.trim()] = r.orig ? (S.graded[r.orig] || []) : []; });
+  S.graded = graded; S.students = e.rows.map(r => r.name.trim()); S.name = name;
+  ui.queue.forEach(it => { if (!it.saved && map[it.s]) it.s = map[it.s]; });
+  ui.stu = ren(ui.stu); if (ui.dx.s !== '__new') ui.dx.s = S.students.includes(ren(ui.dx.s)) ? ren(ui.dx.s) : S.students[0];
+  save(); $('grpDlg').close(); render(); toast('반 정보를 저장했어요');
+}
+function deleteGroup() {
+  if (!confirm(`"${S.name}" 반과 그 기록을 모두 지울까요? 되돌릴 수 없습니다.`)) return;
+  DB.groups = DB.groups.filter(g => g !== S);
+  $('grpDlg').close();
+  const next = DB.groups[0] || null;
+  if (next) useGroup(next); else { S = null; DB.cur = null; save(); ui.queue = []; show('dx'); }
+  toast('반을 지웠어요');
+}
+
 // ---------- 공통 ----------
 function updateCounts() {
-  const pending = S.recs.filter(r => r.conf < LOW && !r.confirmed).length;
+  const pending = S ? S.recs.filter(r => r.conf < LOW && !r.confirmed).length : 0;
   $('t-chk').innerHTML = '진단서 확인' + (pending ? `<span class="cnt">${pending}</span>` : '');
-  $('classPill').textContent = `${D.exam.cls} · ${D.exam.title} · ${N()}명 · ${allQs().length}문항`;
+  $('grpSel').innerHTML = DB.groups.map(g => `<option value="${g.id}"${S && g.id === S.id ? ' selected' : ''}>${esc(g.name)} · ${g.students.length}명</option>`).join('') +
+    `<option value="__new"${!S || ui.onboard ? ' selected' : ''}>+ 새 반 만들기</option>`;
+  $('grpEdit').hidden = !S || ui.onboard;
+  $('grpSel').parentElement.hidden = !DB.groups.length;
 }
 function show(tab) {
-  ui.tab = tab;
+  const onboard = !S || ui.onboard;
+  if (!onboard) ui.tab = tab;
+  $('tabs').hidden = onboard; $('p-new').hidden = !onboard;
   for (const t of ['dx', 'brief', 'stu', 'chk']) {
-    $('p-' + t).hidden = t !== tab; $('t-' + t).setAttribute('aria-selected', String(t === tab));
+    $('p-' + t).hidden = onboard || t !== ui.tab; $('t-' + t).setAttribute('aria-selected', String(t === ui.tab));
   }
   render();
   lsSet(STORE + '.tab', tab);
@@ -845,6 +959,7 @@ function show(tab) {
 }
 function render() {
   updateCounts();
+  if (!S || ui.onboard) { renderNew(); return; }
   if (ui.tab === 'dx') renderDx(); else if (ui.tab === 'brief') renderBrief(); else if (ui.tab === 'stu') renderStu(); else renderChk();
 }
 let toastTimer = null;
@@ -879,7 +994,21 @@ document.addEventListener('click', e => {
   if (row && !e.target.closest('select')) { ui.sel = row.dataset.selItem; ui.pickLine = false; renderDx(); return; }
   const t = e.target.closest('button'); if (!t) return;
   if (t.id === 'go') { runAll(ui.queue); return; }
-  if (t.id === 'resetBtn') { if (confirm('새로 진단한 기록을 지우고 샘플 반으로 되돌릴까요?')) { S = freshState(); ui.queue = []; ui.sel = null; save(); render(); toast('샘플 반으로 초기화했어요'); } return; }
+  if (t.id === 'resetBtn') { if (confirm('이 기기에 저장된 모든 반과 기록을 지울까요? 되돌릴 수 없습니다.')) { DB = { cur: null, groups: [] }; S = null; ui.queue = []; ui.sel = null; save(); show('dx'); toast('모든 기록을 지웠어요'); } return; }
+  if (t.id === 'gCreate') { createGroup(); return; }
+  if (t.id === 'gCancel') { ui.onboard = false; show(ui.tab); return; }
+  if (t.id === 'gSample') { const g = sampleGroup(); DB.groups.push(g); useGroup(g); toast('샘플 반을 열었어요. 가상의 학생 8명 기록입니다.'); return; }
+  if (t.id === 'gAuto') { ui.newG.names = []; renderNew(); return; }
+  if (t.id === 'grpEdit') { openGroupDlg(); return; }
+  if (t.dataset.gdel !== undefined) { ui.gEdit.rows.splice(+t.dataset.gdel, 1); drawGroupDlg(); return; }
+  if (t.dataset.gact) {
+    const a = t.dataset.gact;
+    if (a === 'add') { const used = ui.gEdit.rows.map(r => r.name); let i = 0; while (used.includes(autoName(i))) i++; ui.gEdit.rows.push({ orig: null, name: autoName(i) }); drawGroupDlg(); }
+    if (a === 'cancel') $('grpDlg').close();
+    if (a === 'save') saveGroupDlg();
+    if (a === 'delgroup') deleteGroup();
+    return;
+  }
   if (t.id && t.id.startsWith('t-')) { show(t.id.slice(2)); return; }
   if (t.dataset.go) { show(t.dataset.go); return; }
   if (t.dataset.goStu) { ui.stu = t.dataset.goStu; show('stu'); return; }
@@ -908,6 +1037,13 @@ document.addEventListener('keydown', e => {
   if (e.target.id === 'code' && e.key === 'Enter') { e.preventDefault(); submitCode(e.target.value); }
 });
 document.addEventListener('change', e => {
+  if (e.target.id === 'grpSel') {
+    const v = e.target.value;
+    if (v === '__new') { ui.onboard = true; show(ui.tab); return; }
+    if (ui.queue.some(it => !it.saved && it.status !== 'wait') && !confirm('반영하지 않은 진단이 있습니다. 다른 반으로 옮기면 사라집니다. 옮길까요?')) { updateCounts(); return; }
+    const g = DB.groups.find(x => x.id === v); if (g) useGroup(g); return;
+  }
+  if (e.target.id === 'gCount') { ui.newG.count = +e.target.value; renderNew(); return; }
   if (e.target.id === 'qsel') { ui.dx.qid = ['new', 'sheet'].includes(e.target.value) ? e.target.value : +e.target.value; renderDxForm(); return; }
   if (e.target.id === 'ssel') { ui.dx.s = e.target.value; renderDxForm(); return; }
   if (e.target.id === 'file') { takeFiles(e.target.files); e.target.value = ''; return; }
@@ -919,6 +1055,10 @@ document.addEventListener('change', e => {
   if (s) { const r = recById(s.dataset.sel); if (r) { if (s.value !== r.cause) { r.cause = s.value; r.byTeacher = true; } r.confirmed = true; save(); render(); } }
 });
 document.addEventListener('input', e => {
+  if (e.target.id === 'gName') ui.newG.name = e.target.value;
+  if (e.target.dataset && e.target.dataset.gi !== undefined) ui.newG.names[+e.target.dataset.gi] = e.target.value;
+  if (e.target.id === 'geName') ui.gEdit.name = e.target.value;
+  if (e.target.dataset && e.target.dataset.ge !== undefined) ui.gEdit.rows[+e.target.dataset.ge].name = e.target.value;
   if (e.target.id === 'ctext') ui.dx.custom.text = e.target.value;
   if (e.target.id === 'cans') ui.dx.custom.ans = e.target.value;
   if (e.target.id === 'sexam') ui.dx.sheet.exam = e.target.value;
@@ -937,6 +1077,7 @@ document.addEventListener('paste', e => {
 });
 
 const t0 = lsGet(STORE + '.tab'); if (t0 && ['dx', 'brief', 'stu', 'chk'].includes(t0)) ui.tab = t0;
+if (S) { ui.stu = S.students[0]; ui.dx.s = S.students[0]; }
 show(ui.tab);
 checkAI();
 })();

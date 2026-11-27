@@ -17,11 +17,12 @@
     <div class="topbar">
       <a class="brand" href="index.html" aria-label="한 줄 진단 소개 페이지로"><span class="mark">∿</span><b>한 줄 진단</b></a>
       <div class="meta">
-        <span class="pill" id="classPill"></span>
+        <label class="grpPick"><span class="sr">반 고르기</span><select id="grpSel" class="pill"></select></label>
+        <button class="linkbtn" id="grpEdit" type="button">반 관리</button>
         <span class="status" id="aiStatus" title="AI 연결 상태">연결 확인 중</span>
       </div>
     </div>
-    <p class="muted small">채점한 풀이 사진을 올리면 학생이 처음 틀린 줄과 원인을 찾아 진단서를 만듭니다. 선생님이 확인한 진단은 진찰 기록과 오답 처방전에 바로 반영됩니다.</p>
+    <p class="muted small">채점한 시험지를 올리면 학생이 처음 틀린 줄과 원인을 찾아 진단서를 만듭니다. 선생님이 확인한 진단은 진찰 기록과 오답 처방전에 바로 반영됩니다.</p>
   </header>
 
   <div class="tabs" role="tablist" id="tabs">
@@ -31,14 +32,15 @@
     <button role="tab" id="t-chk" aria-selected="false" aria-controls="p-chk">진단서 확인</button>
   </div>
 
+  <section class="panel" id="p-new" hidden></section>
   <section class="panel" id="p-dx" role="tabpanel" aria-labelledby="t-dx"></section>
   <section class="panel" id="p-brief" role="tabpanel" aria-labelledby="t-brief" hidden></section>
   <section class="panel" id="p-stu" role="tabpanel" aria-labelledby="t-stu" hidden></section>
   <section class="panel" id="p-chk" role="tabpanel" aria-labelledby="t-chk" hidden></section>
 
   <footer class="foot">
-    <span>한 줄 진단 프로토타입 · 샘플 반 데이터와 학생 이름(A~H)은 가상입니다. AI 진단은 제안이며 최종 판단은 선생님이 합니다.</span>
-    <button class="linkbtn" id="resetBtn" type="button">샘플 반으로 초기화</button>
+    <span>한 줄 진단 프로토타입 · 반과 진단 기록은 이 브라우저에만 저장됩니다. AI 진단은 제안이며 최종 판단은 선생님이 합니다.</span>
+    <button class="linkbtn" id="resetBtn" type="button">이 기기의 모든 기록 지우기</button>
   </footer>
 </div>
 <dialog class="zoom" id="zoom"><img alt="풀이 사진 크게 보기"></dialog>

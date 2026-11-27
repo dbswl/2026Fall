@@ -172,8 +172,13 @@ module.exports = async function handler(req, res) {
     ? `시험지 사진에서 ${qno}번 문항을 찾아, 문제를 사진에서 읽고 그 문항의 학생 풀이만 진단해 주세요.\n${ansText}${where}`
     : `문제: ${problem}\n${ansText}\n\n사진 속 학생의 풀이를 진단해 주세요.`;
 
+  // Vercel 함수 제한(60초) 전에 끊고, 화면에 이유를 알려 준다
+  const t0 = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 54000);
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
+      signal: ctrl.signal,
       method: 'POST',
       headers: {
         'x-api-key': key,
@@ -196,6 +201,8 @@ module.exports = async function handler(req, res) {
       })
     });
     const j = await r.json().catch(() => ({}));
+    clearTimeout(timer);
+    console.log(`[diagnose] ${scan ? 'scan' : qno ? 'q' + qno : 'problem'} ${r.status} ${Date.now() - t0}ms`, j.usage ? JSON.stringify(j.usage) : '');
     if (!r.ok) {
       const msg = (j && j.error && j.error.message) || `HTTP ${r.status}`;
       return res.status(502).json({ error: 'upstream', status: r.status, message: msg });
@@ -216,6 +223,9 @@ module.exports = async function handler(req, res) {
     if (!result || !Array.isArray(result.transcribed_lines)) return res.status(502).json({ error: 'no_result' });
     return res.status(200).json({ ok: true, model: j.model || MODEL, result, usage: j.usage || null });
   } catch (e) {
+    clearTimeout(timer);
+    console.log(`[diagnose] ${scan ? 'scan' : 'q' + qno} failed after ${Date.now() - t0}ms:`, e && e.message);
+    if (e && e.name === 'AbortError') return res.status(504).json({ error: 'timeout', message: `AI 응답이 ${Math.round((Date.now() - t0) / 1000)}초 안에 오지 않았습니다` });
     return res.status(502).json({ error: 'network', message: String(e && e.message || e) });
   }
 };

@@ -237,6 +237,29 @@ function paint(it) {
 }
 const selItem = () => ui.queue.find(it => it.id === ui.sel) || null;
 
+// ---------- 진단 요청 ----------
+async function postDiagnose(body) {
+  const send = async () => {
+    const t0 = Date.now();
+    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 75000);
+    try {
+      const r = await fetch('api/diagnose', { method: 'POST', signal: ctrl.signal,
+        headers: { 'content-type': 'application/json', 'x-access-code': ui.code || '' }, body: JSON.stringify(body) });
+      const text = await r.text();
+      let j = {}; try { j = JSON.parse(text); } catch (e) { j = { error: 'bad_json', message: (text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) }; }
+      j.__sec = Math.round((Date.now() - t0) / 1000);
+      return { r, j };
+    } catch (e) {
+      const sec = Math.round((Date.now() - t0) / 1000);
+      const err = new Error(e.name === 'AbortError' ? `응답이 ${sec}초 넘게 오지 않았습니다` : `서버 연결이 끊겼습니다 (${sec}초 후, ${e.message})`);
+      err.sec = sec; err.net = true; throw err;
+    } finally { clearTimeout(timer); }
+  };
+  try { return await send(); }
+  catch (e) { if (e.net && e.sec < 10) { await new Promise(res => setTimeout(res, 1500)); return await send(); } throw e; }
+}
+const httpMsg = (r, j) => j.message || j.error ? `${j.message || j.error} (HTTP ${r.status}, ${j.__sec}초)` : `HTTP ${r.status} (${j.__sec}초)`;
+
 // ---------- 가림 편집 ----------
 // 사진 위를 끌어 가릴 곳을 더하고, 가린 칸을 누르면 지운다. 적용하면 다시 진단한다.
 function openEditor(it) {
@@ -339,19 +362,17 @@ async function diagnoseItem(it) {
   let result = null, mode = 'ai', note = '';
   try {
     if (!aiOn()) throw Object.assign(new Error('demo'), { demo: true });
-    const r = await fetch('api/diagnose', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-access-code': ui.code || '' },
-      body: JSON.stringify(it.sheet
+    const { r, j } = await postDiagnose(it.sheet
         ? { image: it.photo, question_no: it.sheet.no, answer: q.ans, topic: q.topic, region: it.hint || null }
-        : { image: it.photo, problem: plain(q.text), answer: q.ans, topic: q.topic })
-    });
-    const j = await r.json().catch(() => ({}));
+        : { image: it.photo, problem: plain(q.text), answer: q.ans, topic: q.topic });
     if (r.status === 503 && j.error === 'no_api_key') throw Object.assign(new Error('demo'), { demo: true });
     if (r.status === 401) { ui.codeOk = false; throw Object.assign(new Error('체험 코드가 맞지 않음'), { demo: true }); }
     if (r.status === 422) { it.status = 'err'; it.errMsg = j.message || '문항을 찾지 못했습니다'; return; }
-    if (!r.ok || !j.result) throw new Error(j.message || j.error || ('HTTP ' + r.status));
+    if (!r.ok || !j.result) throw new Error(httpMsg(r, j));
     result = j.result;
   } catch (e) {
+    // 시험지 문항은 예시 결과로 대신하지 않고 실패로 남겨 다시 진단하게 한다
+    if (it.sheet && !e.demo) { it.status = 'err'; it.errMsg = '진단하지 못했습니다: ' + e.message; return; }
     if (!e.demo) note = 'AI 진단에 실패해 예시 결과를 보여 줍니다 (' + e.message + ').';
     await new Promise(res => setTimeout(res, 900 + Math.random() * 700));
     result = demoResult(q, it.s); mode = 'demo';
@@ -374,14 +395,11 @@ async function scanItem(it, todo) {
   it.status = 'run'; it.errMsg = '';
   if (!aiOn()) { it.status = 'err'; it.errMsg = '시험지 전체에서 문항을 찾는 기능은 실제 AI가 연결되어 있을 때만 됩니다 (체험 코드 필요).'; return; }
   let j = {}, r;
-  try {
-    r = await fetch('api/diagnose', { method: 'POST', headers: { 'content-type': 'application/json', 'x-access-code': ui.code || '' },
-      body: JSON.stringify({ image: it.photo, scan: true, answer: it.sheet.keyText || '' }) });
-    j = await r.json().catch(() => ({}));
-  } catch (e) { it.status = 'err'; it.errMsg = '문항을 찾지 못했습니다 (' + e.message + ')'; return; }
+  try { ({ r, j } = await postDiagnose({ image: it.photo, scan: true, answer: it.sheet.keyText || '' })); }
+  catch (e) { it.status = 'err'; it.errMsg = '문항을 찾지 못했습니다: ' + e.message; return; }
   if (r.status === 401) ui.codeOk = false;
   const qs = r.ok && j.result && Array.isArray(j.result.questions) ? j.result.questions : null;
-  if (!qs || !qs.length) { it.status = 'err'; it.errMsg = qs ? '사진에서 문항을 찾지 못했습니다.' : '문항을 찾지 못했습니다 (' + (j.message || j.error || 'HTTP ' + r.status) + ')'; return; }
+  if (!qs || !qs.length) { it.status = 'err'; it.errMsg = qs ? '사진에서 문항을 찾지 못했습니다.' : '문항을 찾지 못했습니다: ' + httpMsg(r, j); return; }
   const ok = v => typeof v === 'number' && isFinite(v);
   const seen = new Set();
   const made = qs.map(q => ({ ...q, no: String(q.no || '').replace(/[^0-9]/g, '') }))
@@ -614,7 +632,7 @@ function renderDxOut() {
   else if (it && it.status === 'err') card = `<div class="card"><div class="res-head"><div><h2>학생 ${esc(it.s)} · ${esc(problemOf(it).topic || '')}</h2>
       <p class="muted small">${esc(it.errMsg || '진단하지 못했습니다.')}</p></div></div>
       <div class="res-grid"><div class="photo" data-zoom-item="${it.id}"><img src="${it.photo}" alt="학생 풀이 사진"></div>
-      <div class="small">${it.sheet ? '번호가 사진에 잘 보이는지, 문항 번호를 바르게 적었는지 확인해 주세요. 사진을 옆으로 찍었다면 "가림 편집"에서 돌릴 수 있습니다.' : ''}</div></div>
+      <div class="small">${/HTTP|연결|초 넘게|초 후/.test(it.errMsg || '') ? '서버나 네트워크 문제입니다. 잠시 후 "다시 진단"을 눌러 주세요. 같은 오류가 반복되면 이 화면을 캡처해 알려 주세요.' : it.scan ? '사진이 너무 흐리거나 시험지가 잘려 있지 않은지 확인해 주세요.' : it.sheet ? '번호가 사진에 잘 보이는지, 문항 번호를 바르게 적었는지 확인해 주세요. 사진을 옆으로 찍었다면 "가림 편집"에서 돌릴 수 있습니다.' : ''}</div></div>
       <div class="actions"><button class="btn ghost" data-act="again">다시 진단</button><button class="btn ghost" data-edit-item="${it.id}">가림 편집</button></div></div>`;
   else if (it && it.status === 'run') card = `<div class="card"><div class="loading"><div class="st now"><i></i>이 사진을 진단하는 중</div></div></div>`;
   else if (!ui.queue.length || (it && it.status === 'wait' && !ui.running)) {

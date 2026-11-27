@@ -1,5 +1,6 @@
 // 한 줄 진단: 풀이 사진 진단 API (Vercel 서버리스 함수)
 // POST /api/diagnose  { image: "data:image/jpeg;base64,...", problem: "...", answer: "...", topic?: "..." }
+//   또는 시험지 한 장 전체 사진이면 { image, question_no: "12", answer?: "..." } (문제는 사진에서 읽는다)
 // 환경 변수: ANTHROPIC_API_KEY (필수), CLAUDE_MODEL (선택, 기본 claude-sonnet-5-5)
 // 키가 없으면 503 { error: "no_api_key" } 를 돌려주고, 화면은 데모 모드(예시 결과)로 전환한다.
 
@@ -8,6 +9,12 @@ const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const SYSTEM = `당신은 학원 수학 강사의 채점을 돕는 오답 진단 도우미입니다.
 선생님이 학생 한 명의 풀이 사진(한 문항)과 문제, 정답을 줍니다. 아래 순서로 진단하고 반드시 submit_diagnosis 도구로만 답하세요.
 사진에서 어둡게 칠한 '개인정보 가림' 영역은 개인정보 보호를 위해 가린 부분이니 무시하세요. 사진에 여러 문항이 함께 찍혀 있으면 주어진 문제에 해당하는 문항과 그 풀이만 보고 진단하세요.
+문제 대신 문항 번호만 주어지면(시험지 한 장 전체 사진), 사진에서 그 번호의 문항을 찾아 문제를 problem_text에 그대로 옮겨 적고(보기가 있으면 보기도), 그 문항 근처에 학생이 쓴 풀이와 고른 답만 보고 진단합니다.
+- 다른 문항의 풀이를 섞지 않습니다. 풀이가 다른 문항 쪽으로 넘어가 있으면 내용으로 판단합니다.
+- 객관식이면 student_answer에 고른 번호와 그 값을 함께 적습니다. 예) "② -2"
+- 정답이 주어지지 않으면 직접 풀어 correct_answer에 적고 그 답으로 채점합니다. 선생님의 채점 표시(빨간 동그라미·빗금·체크)는 참고만 하고, 판단은 풀이 내용으로 합니다.
+- question_region에 그 문항과 풀이가 들어 있는 영역을 넉넉하게 적습니다.
+- 그 번호를 사진에서 찾지 못하면 question_found=false로 두고 나머지 항목은 비워 둡니다.
 
 1. 판독: 학생이 쓴 풀이를 위에서 아래로 한 줄씩 그대로 옮겨 적습니다. 틀린 내용도 고치지 말고 학생이 쓴 그대로 적습니다.
    분수는 a/b, 거듭제곱은 x², 곱셈은 ×처럼 읽기 쉬운 텍스트로 씁니다. 지운 흔적이나 낙서는 빼고, 알아볼 수 없는 부분은 [?]로 둡니다.
@@ -41,6 +48,13 @@ const TOOL = {
       confidence: { type: 'number', minimum: 0, maximum: 1 },
       legibility: { type: 'string', enum: ['good', 'partial', 'poor'] },
       teacher_note: { type: 'string', description: '다음 수업에서 이 학생에게 짚어 줄 지도 포인트 한 문장' },
+      question_found: { type: 'boolean', description: '문항 번호로 요청했을 때 사진에서 그 문항을 찾았는지 (문제를 직접 준 경우 true)' },
+      problem_text: { type: 'string', description: '문항 번호로 요청했을 때 사진에서 읽은 문제 (보기 포함). 문제를 직접 준 경우 빈 문자열' },
+      correct_answer: { type: 'string', description: '정답 (주어진 정답 또는 직접 푼 답)' },
+      question_region: {
+        type: 'object', description: '문항 번호로 요청했을 때, 사진 전체를 0~1로 볼 때 그 문항(문제와 학생 풀이 전체)이 차지하는 직사각형. x,y는 왼쪽 위 모서리',
+        properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } }
+      },
       similar_problem: {
         type: 'object',
         properties: { text: { type: 'string' }, answer: { type: 'string' } },
@@ -100,12 +114,16 @@ module.exports = async function handler(req, res) {
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
   const img = parseDataUrl(body && body.image);
   const problem = String((body && body.problem) || '').slice(0, 2000);
+  const qno = String((body && body.question_no) || '').replace(/[^0-9A-Za-z가-힣\-]/g, '').slice(0, 10);
   const answer = String((body && body.answer) || '').slice(0, 300);
   if (!img) return res.status(400).json({ error: 'bad_image' });
   if (img.data.length > 6_000_000) return res.status(413).json({ error: 'image_too_large' });
-  if (!problem) return res.status(400).json({ error: 'no_problem' });
+  if (!problem && !qno) return res.status(400).json({ error: 'no_problem' });
 
-  const userText = `문제: ${problem}\n정답: ${answer || '(주어지지 않음: 직접 풀어서 판단)'}\n\n사진 속 학생의 풀이를 진단해 주세요.`;
+  const ansText = `정답: ${answer || '(주어지지 않음: 직접 풀어서 판단)'}`;
+  const userText = qno && !problem
+    ? `시험지 사진에서 ${qno}번 문항을 찾아, 문제를 사진에서 읽고 그 문항의 학생 풀이만 진단해 주세요.\n${ansText}`
+    : `문제: ${problem}\n${ansText}\n\n사진 속 학생의 풀이를 진단해 주세요.`;
 
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -117,7 +135,7 @@ module.exports = async function handler(req, res) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2000,
+        max_tokens: 2500,
         system: SYSTEM,
         tools: [TOOL],
         tool_choice: { type: 'auto' },
@@ -143,6 +161,7 @@ module.exports = async function handler(req, res) {
       const m = text.match(/\{[\s\S]*\}/);
       if (m) { try { result = JSON.parse(m[0]); } catch (e) { result = null; } }
     }
+    if (result && result.question_found === false) return res.status(422).json({ error: 'question_not_found', message: `${qno}번 문항을 사진에서 찾지 못했습니다` });
     if (!result || !Array.isArray(result.transcribed_lines)) return res.status(502).json({ error: 'no_result' });
     return res.status(200).json({ ok: true, model: j.model || MODEL, result, usage: j.usage || null });
   } catch (e) {

@@ -50,7 +50,7 @@ function save() {
 const ui = {
   tab: 'dx', stu: 'A', showAll: false,
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
-  dx: { qid: 12, s: 'A', custom: { text: '', ans: '' }, newName: '' },
+  dx: { qid: 12, s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '' }, newName: '' },
   queue: [], sel: null, pickLine: false, running: false,
   redact: lsGet(STORE + '.redact') !== '0',   // 개인정보 자동 가리기 (기본 켬)
   edit: null                                   // 가림 편집 중인 사진
@@ -59,7 +59,9 @@ const ui = {
 const allQs = () => D.questions.concat(S.custom);
 const qOf = id => allQs().find(q => String(q.id) === String(id));
 const N = () => S.students.length;
-const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : '직접 입력한 문항';
+const unitLabel = q => q.unit ? `${q.unit}단원 ${D.units[q.unit]}` : q.sheet ? `${q.exam} 시험지` : '직접 입력한 문항';
+const qNo = q => q.unit ? q.id + '번' : q.sheet ? q.no + '번' : '직접 입력';     // 짧은 문항 표시
+const qHead = q => q.unit ? q.id : q.sheet ? q.no : '직';                         // 채점표 머리
 const causeTag = k => k && D.causes[k] ? `<span class="tag ${k}">${D.causes[k].short}</span>` : '';
 const topNames = a => a.map(k => D.causes[k].name).join(' · ');
 const recById = id => S.recs.find(r => r.id === id);
@@ -162,6 +164,12 @@ async function takeFiles(files) {
   if (ui.queue.length + imgs.length > 40) { toast('한 번에 40장까지 올릴 수 있어요'); return; }
   const qid = ui.dx.qid;
   if (qid === 'new' && !ui.dx.custom.text.trim()) { toast('먼저 문제를 입력해 주세요'); return; }
+  let sheet = null;
+  if (qid === 'sheet') {
+    sheet = sheetSpec();
+    if (!sheet.nos.length) { toast('진단할 문항 번호를 먼저 적어 주세요 (예: 9, 12, 13)'); return; }
+    if (ui.queue.length + imgs.length * sheet.nos.length > 60) { toast('한 번에 60문항까지 진단할 수 있어요'); return; }
+  }
   for (const f of imgs) {
     try {
       const img = await readImage(f);
@@ -169,14 +177,40 @@ async function takeFiles(files) {
       const a = ui.redact && window.Redact ? Redact.analyze(img) : { rot: 0, masks: [] };
       const it = { id: 'p' + (++seq), name: f.name, img, rot: a.rot, masks: a.masks, auto: a.masks.length,
         qid, q: qid === 'new' ? { text: ui.dx.custom.text.trim(), ans: ui.dx.custom.ans.trim() } : null,
-        s: nextStudent(qid), status: 'wait', cur: null, saved: false };
+        s: nextStudent(sheet ? sheetQid(sheet.exam, sheet.nos[0]) : qid), status: 'wait', cur: null, saved: false };
       paint(it);
+      if (sheet) {
+        // 같은 사진을 문항 번호마다 나눠 진단한다 (가림·학생은 사진 단위로 함께 바뀜)
+        it.grp = it.id;
+        sheet.nos.forEach((no, k) => {
+          const x = k ? { ...it, id: 'p' + (++seq) } : it;
+          x.qid = sheetQid(sheet.exam, no); x.q = null;
+          x.sheet = { exam: sheet.exam, no, ans: sheet.ans[k] || '', text: '' };
+          ui.queue.push(x);
+          if (!ui.sel) ui.sel = x.id;
+        });
+        continue;
+      }
       ui.queue.push(it);
       if (!ui.sel) ui.sel = it.id;
     } catch (e) { toast('사진을 읽지 못했습니다: ' + f.name); }
   }
   renderDx();
 }
+function sheetSpec() {
+  const exam = (ui.dx.sheet.exam || '').trim() || '시험지';
+  const nos = [...new Set((ui.dx.sheet.nos.match(/\d+/g) || []).map(n => String(+n)).filter(n => +n > 0 && +n < 200))];
+  const ans = (ui.dx.sheet.ans || '').split(/[,，\/]|\s{2,}/).map(x => x.trim());
+  return { exam, nos, ans };
+}
+function padBox(g, p) {
+  const x = Math.max(0, g.x - p), y = Math.max(0, g.y - p);
+  return { x, y, w: Math.min(1 - x, g.w + 2 * p), h: Math.min(1 - y, g.h + 2 * p) };
+}
+// 문항 영역만 잘라 낸 사진 (처방전·기록용). 영역을 모르면 사진 전체
+const cropShot = it => it.region && window.Redact ? Redact.render(it.img, it.rot, it.masks, 900, 0.8, it.region) : it.thumb;
+const sheetQid = (exam, no) => 's:' + exam + ':' + no;
+const group = it => it.grp ? ui.queue.filter(x => x.grp === it.grp) : [it];
 function paint(it) {
   if (window.Redact) { it.photo = Redact.render(it.img, it.rot, it.masks, 1600, 0.86); it.thumb = Redact.render(it.img, it.rot, it.masks, 360, 0.7); }
   else { it.photo = resize(it.img, 1600, 0.86); it.thumb = resize(it.img, 360, 0.7); }
@@ -217,8 +251,11 @@ function openEditor(it) {
       if (k === 'cancel') { ui.edit = null; dlg.close(); }
       if (k === 'ok') {
         const it2 = ed.it; it2.rot = ed.rot; it2.masks = ed.masks; paint(it2);
-        const had = it2.status === 'done' || it2.status === 'err';
-        if (had) { it2.status = 'wait'; it2.cur = null; }
+        let had = false;
+        group(it2).forEach(x => {
+          if (x !== it2) { x.rot = it2.rot; x.masks = it2.masks; x.photo = it2.photo; x.thumb = it2.thumb; }
+          if (!x.saved && (x.status === 'done' || x.status === 'err')) { x.status = 'wait'; x.cur = null; had = true; }
+        });
         ui.edit = null; dlg.close(); ui.sel = it2.id; renderDx();
         toast(had ? '가림을 바꿨어요. 이 사진을 다시 진단해 주세요.' : `가림 ${it2.masks.length}곳을 적용했어요`);
       }
@@ -246,6 +283,12 @@ function drawEditor(temp) {
 
 // ---------- 진단 ----------
 function problemOf(it) {
+  if (it.sheet) {
+    const saved = qOf(it.qid);
+    return { id: it.qid, sheet: true, exam: it.sheet.exam, no: it.sheet.no,
+      text: it.sheet.text ? esc(it.sheet.text) : saved ? saved.text : '', ans: it.sheet.ans || (saved && saved.ans !== '-' ? saved.ans : ''),
+      topic: `${it.sheet.exam} ${it.sheet.no}번`, unit: 0, sim: saved && saved.sim };
+  }
   if (it.qid === 'new' || String(it.qid).startsWith('c') && it.q) return { id: it.qid, text: esc(it.q.text), ans: it.q.ans, topic: '직접 입력', unit: 0 };
   return qOf(it.qid);
 }
@@ -271,17 +314,20 @@ function demoResult(q, s) {
 
 async function diagnoseItem(it) {
   const q = problemOf(it);
-  it.status = 'run'; it.cur = null; it.saved = false;
+  it.status = 'run'; it.cur = null; it.saved = false; it.errMsg = ''; it.region = null; it.regionShot = null;
   let result = null, mode = 'ai', note = '';
   try {
     if (!aiOn()) throw Object.assign(new Error('demo'), { demo: true });
     const r = await fetch('api/diagnose', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-access-code': ui.code || '' },
-      body: JSON.stringify({ image: it.photo, problem: plain(q.text), answer: q.ans, topic: q.topic })
+      body: JSON.stringify(it.sheet
+        ? { image: it.photo, question_no: it.sheet.no, answer: q.ans, topic: q.topic }
+        : { image: it.photo, problem: plain(q.text), answer: q.ans, topic: q.topic })
     });
     const j = await r.json().catch(() => ({}));
     if (r.status === 503 && j.error === 'no_api_key') throw Object.assign(new Error('demo'), { demo: true });
     if (r.status === 401) { ui.codeOk = false; throw Object.assign(new Error('체험 코드가 맞지 않음'), { demo: true }); }
+    if (r.status === 422) { it.status = 'err'; it.errMsg = j.message || '문항을 찾지 못했습니다'; return; }
     if (!r.ok || !j.result) throw new Error(j.message || j.error || ('HTTP ' + r.status));
     result = j.result;
   } catch (e) {
@@ -289,7 +335,14 @@ async function diagnoseItem(it) {
     await new Promise(res => setTimeout(res, 900 + Math.random() * 700));
     result = demoResult(q, it.s); mode = 'demo';
   }
-  it.cur = toCurrent(result, q, it, mode, note);
+  if (it.sheet && mode === 'ai') {
+    if (result.problem_text) it.sheet.text = String(result.problem_text);
+    if (!it.sheet.ans && result.correct_answer) { it.sheet.aiAns = String(result.correct_answer); }
+    const g = result.question_region, ok = v => typeof v === 'number' && isFinite(v);
+    it.region = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 && g.w <= 1.01 && g.h <= 1.01
+      ? padBox(g, 0.04) : null;
+  }
+  it.cur = toCurrent(result, problemOf(it), it, mode, note);
   it.status = 'done';
 }
 
@@ -298,7 +351,7 @@ async function runAll(items) {
   const todo = items.filter(it => it.status === 'wait' || it.status === 'err');
   if (!todo.length) return;
   for (const it of todo) {
-    if (it.qid === 'new' || !qOf(it.qid) && !(it.q && it.q.text)) {
+    if (!it.sheet && (it.qid === 'new' || !qOf(it.qid) && !(it.q && it.q.text))) {
       if (!it.q || !it.q.text) { toast('문제를 입력해 주세요'); return; }
     }
     if (!String(it.s || '').trim()) { toast('학생을 모두 정해 주세요'); return; }
@@ -339,6 +392,19 @@ function toCurrent(R, q, it, mode, note) {
 }
 
 function ensureQuestion(it) {
+  if (it.sheet) {
+    const ans = it.sheet.ans || it.sheet.aiAns || '-';
+    let q = S.custom.find(c => c.id === it.qid);
+    if (!q) {
+      q = { id: it.qid, unit: 0, sheet: true, exam: it.sheet.exam, no: it.sheet.no, topic: `${it.sheet.exam} ${it.sheet.no}번`,
+        text: esc(it.sheet.text || `${it.sheet.no}번 문항`), ans, sim: (it.cur && it.cur.rec.sim) || { text: '-', ans: '-' }, hint: (it.cur && it.cur.rec.tip) || '' };
+      S.custom.push(q);
+    } else {
+      if (it.sheet.text && (!q.text || /번 문항$/.test(q.text))) q.text = esc(it.sheet.text);
+      if (q.ans === '-' && ans !== '-') q.ans = ans;
+    }
+    return it.qid;
+  }
   if (it.qid !== 'new') return it.qid;
   // 같은 문제를 이미 저장했으면 그 문항을 쓴다
   const same = S.custom.find(c => plain(c.text) === it.q.text);
@@ -362,7 +428,7 @@ function confirmItem(it, quiet) {
   if (!g.includes(String(qid))) g.push(String(qid));
   S.recs = S.recs.filter(r => !(r.s === it.s && String(r.q) === String(qid)));
   if (!cur.correct) {
-    S.recs.push({ ...cur.rec, s: it.s, id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), q: qid, photo: it.thumb, confirmed: true,
+    S.recs.push({ ...cur.rec, s: it.s, id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), q: qid, photo: it.sheet ? cropShot(it) : it.thumb, confirmed: true,
       byTeacher: cur.rec.cause !== cur.aiCause || cur.rec.err !== cur.aiErr });
   }
   S.session.unshift({ s: it.s, q: qid, cause: cur.correct ? null : cur.rec.cause, correct: cur.correct, thumb: it.thumb, mode: cur.mode, t: Date.now() });
@@ -401,8 +467,10 @@ function codeBox() {
     <span class="privacy">코드가 없으면 샘플 반의 예시 결과로 체험할 수 있습니다.</span></div>`;
 }
 function renderDxForm() {
-  const q = ui.dx.qid === 'new' ? null : qOf(ui.dx.qid);
+  const q = ui.dx.qid === 'new' || ui.dx.qid === 'sheet' ? null : qOf(ui.dx.qid);
+  const sh = ui.dx.sheet;
   const qOpts = D.questions.map(x => `<option value="${x.id}"${String(x.id) === String(ui.dx.qid) ? ' selected' : ''}>${x.id}번 · ${esc(x.topic)}</option>`).join('') +
+    `<option value="sheet"${ui.dx.qid === 'sheet' ? ' selected' : ''}>+ 시험지 한 장에서 번호로 고르기</option>` +
     `<option value="new"${ui.dx.qid === 'new' ? ' selected' : ''}>+ 다른 문제 직접 입력</option>`;
   const sOpts = S.students.map(x => `<option value="${esc(x)}"${x === ui.dx.s ? ' selected' : ''}>학생 ${esc(x)}</option>`).join('') +
     `<option value="__new"${ui.dx.s === '__new' ? ' selected' : ''}>+ 새 학생</option>`;
@@ -414,6 +482,10 @@ function renderDxForm() {
     <div class="field"><label for="qsel"><span class="stepno">1</span>문항</label>
       <select id="qsel"${ui.running ? ' disabled' : ''}>${qOpts}</select>
       ${q ? `<div class="probbox">${q.text}<div class="a">정답 ${esc(q.ans)} · ${unitLabel(q)}</div></div>` :
+        ui.dx.qid === 'sheet' ? `<input type="text" id="sexam" placeholder="시험 이름 (선택, 예: 3분기 진단평가)" value="${esc(sh.exam)}">
+         <input type="text" id="snos" placeholder="진단할 문항 번호 (예: 9, 12, 13)" value="${esc(sh.nos)}" inputmode="numeric">
+         <input type="text" id="sans" placeholder="정답 (선택, 번호 순서대로 예: -4, 6, ③)" value="${esc(sh.ans)}">
+         <span class="privacy">시험지 한 장을 통째로 찍어 올리면, AI가 사진에서 그 번호의 문제를 읽고 학생 풀이를 진단합니다. 정답을 비워 두면 AI가 직접 풀어 채점합니다.</span>` :
         `<textarea id="ctext" placeholder="문제를 입력하세요">${esc(ui.dx.custom.text)}</textarea>
          <input type="text" id="cans" placeholder="정답 (모르면 비워 두세요)" value="${esc(ui.dx.custom.ans)}">`}
     </div>
@@ -439,14 +511,14 @@ function queueHtml() {
     let st;
     if (it.status === 'wait') st = '<span class="qst">대기</span>';
     else if (it.status === 'run') st = '<span class="qst run">진단 중</span>';
-    else if (it.status === 'err') st = '<span class="qst bad">실패</span>';
+    else if (it.status === 'err') st = `<span class="qst bad" title="${esc(it.errMsg || '')}">${it.errMsg ? '못 찾음' : '실패'}</span>`;
     else if (it.saved) st = '<span class="qst ok">✓ 반영</span>';
     else if (it.cur.correct) st = '<span class="qst ok">정답</span>';
     else st = `${causeTag(it.cur.rec.cause)}${it.cur.rec.conf < LOW ? '<span class="qst bad">확인</span>' : ''}`;
     return `<div class="qrow2${it.id === ui.sel ? ' on' : ''}" data-sel-item="${it.id}">
       <img src="${it.thumb}" alt="">
       <div class="qmeta"><select data-item-s="${it.id}" aria-label="학생"${it.status === 'run' || it.saved ? ' disabled' : ''}>${stOpts(it.s)}</select>
-        <span class="small muted">${q && q.unit ? q.id + '번' : '직접 입력'}${it.masks.length ? ` · <span class="hid">가림 ${it.masks.length}곳</span>` : ''}</span>
+        <span class="small muted">${q ? qNo(q) : '직접 입력'}${it.masks.length ? ` · <span class="hid">가림 ${it.masks.length}곳</span>` : ''}</span>
         ${it.saved || it.status === 'run' ? '' : `<button class="linkbtn" data-edit-item="${it.id}" type="button">가림 편집</button>`}</div>
       <div class="qstate">${st}</div>
       <button class="x" data-del-item="${it.id}" aria-label="이 사진 빼기" ${it.status === 'run' ? 'disabled' : ''}>×</button></div>`;
@@ -476,6 +548,11 @@ function renderDxOut() {
   const it = selItem();
   let card = '';
   if (it && it.status === 'done' && it.cur) card = resultCard(it);
+  else if (it && it.status === 'err') card = `<div class="card"><div class="res-head"><div><h2>학생 ${esc(it.s)} · ${esc(problemOf(it).topic || '')}</h2>
+      <p class="muted small">${esc(it.errMsg || '진단하지 못했습니다.')}</p></div></div>
+      <div class="res-grid"><div class="photo" data-zoom-item="${it.id}"><img src="${it.photo}" alt="학생 풀이 사진"></div>
+      <div class="small">${it.sheet ? '번호가 사진에 잘 보이는지, 문항 번호를 바르게 적었는지 확인해 주세요. 사진을 옆으로 찍었다면 "가림 편집"에서 돌릴 수 있습니다.' : ''}</div></div>
+      <div class="actions"><button class="btn ghost" data-act="again">다시 진단</button><button class="btn ghost" data-edit-item="${it.id}">가림 편집</button></div></div>`;
   else if (it && it.status === 'run') card = `<div class="card"><div class="loading"><div class="st now"><i></i>이 사진을 진단하는 중</div></div></div>`;
   else if (!ui.queue.length || (it && it.status === 'wait' && !ui.running)) {
     card = `<div class="card empty">
@@ -488,20 +565,23 @@ function renderDxOut() {
 function resultCard(it) {
   const cur = it.cur; const r = cur.rec; const q = problemOf(it);
   const head = `<div class="res-head"><div><h2>학생 ${esc(it.s)} · ${q.topic ? esc(q.topic) : ''}</h2>
-      <p class="muted small">${q.unit ? q.id + '번 · ' + unitLabel(q) : '직접 입력한 문항'}${ui.queue.length > 1 ? ` · ${ui.queue.indexOf(it) + 1}번째 사진` : ''}</p></div>
+      <p class="muted small">${q.unit ? q.id + '번 · ' + unitLabel(q) : unitLabel(q)}${ui.queue.length > 1 ? ` · ${ui.queue.indexOf(it) + 1}번째` : ''}</p></div>
       <div class="meta">${cur.mode === 'ai' ? '<span class="badge ai">AI 진단</span>' : '<span class="badge demo">데모 모드 · 예시 결과</span>'}
       ${!cur.correct ? `<span class="badge ${r.conf < LOW ? 'low' : 'ai'}">신뢰도 ${pct(r.conf)}%</span>` : ''}</div></div>`;
   const notes = (cur.note ? `<div class="warn">${esc(cur.note)}</div>` : '') +
     (r.legibility !== 'good' ? `<div class="warn">글씨가 ${r.legibility === 'poor' ? '잘 보이지 않아' : '일부 흐려서'} 판독이 틀렸을 수 있습니다. 옮겨 적은 풀이를 사진과 비교해 주세요.</div>` : '') +
     (!cur.correct && r.conf < LOW && !it.saved ? `<div class="warn">신뢰도가 낮은 진단입니다. 틀린 줄과 원인이 맞는지 확인해 주세요.</div>` : '');
-  const photo = `<div class="photo" data-zoom-item="${it.id}" title="크게 보기"><img src="${it.photo}" alt="학생 풀이 사진"></div>`;
+  if (it.region && !it.regionShot) it.regionShot = cropShot(it);
+  const photo = `<div class="photo" data-zoom-item="${it.id}" title="눌러서 사진 전체 보기"><img src="${it.region ? it.regionShot : it.photo}" alt="학생 풀이 사진">${it.region ? '<span class="cropnote">문항 부분 · 눌러서 전체 보기</span>' : ''}</div>`;
+  const ansShown = q.ans || (it.sheet && it.sheet.aiAns ? it.sheet.aiAns + ' (AI가 푼 값)' : '-');
+  const readProb = it.sheet ? `<div class="probbox small"><b>AI가 사진에서 읽은 ${esc(it.sheet.no)}번 문제</b><br>${q.text || '(읽지 못함)'}<div class="a">다른 문항을 읽었다면 "다시 진단"을 눌러 주세요.</div></div>` : '';
   const nav = ui.queue.length > 1 ? `<button class="btn ghost" data-act="prev">이전</button><button class="btn ghost" data-act="next">다음</button>` : '';
 
   if (cur.correct) {
-    return `<div class="card">${head}${notes}
+    return `<div class="card">${head}${notes}${readProb}
       <div class="res-grid">${photo}<div class="side" style="display:flex;flex-direction:column;gap:10px">
         ${workBox({ work: r.work, err: null })}
-        <div class="good"><b style="color:var(--ok)">정답 풀이입니다.</b><div class="small">쓴 답 ${esc(r.given)} · 정답 ${esc(q.ans || '-')}</div></div>
+        <div class="good"><b style="color:var(--ok)">정답 풀이입니다.</b><div class="small">쓴 답 ${esc(r.given)} · 정답 ${esc(ansShown)}</div></div>
       </div></div>
       <div class="actions">${it.saved ? '<span class="done">✓ 정답으로 기록했어요</span>' : '<button class="btn ok" data-act="confirm">정답으로 기록</button>'}
         <button class="btn ghost" data-act="again">다시 진단</button>${nav}</div></div>`;
@@ -513,9 +593,10 @@ function resultCard(it) {
       <div class="side" style="display:flex;flex-direction:column;gap:10px;min-width:0">
         ${ui.pickLine && !it.saved ? '<div class="warn" style="border-color:var(--accent);background:var(--soft)">처음 틀린 줄을 눌러 고르세요.</div>' : ''}
         ${workBox(r, { pick: ui.pickLine && !it.saved })}
-        <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 <b>${esc(q.ans || '-')}</b></span></div>
+        <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 <b>${esc(ansShown)}</b></span></div>
       </div>
     </div>
+    ${readProb}
     <div class="cols" style="gap:14px">
       <div class="note"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>원인</b> ${causeTag(r.cause)} ${it.saved ? '' : causeSel}</div>
         <div class="small" style="margin-top:6px">${esc(r.why)}</div>
@@ -556,7 +637,7 @@ function renderVersus() {
       <div class="who">${who}<div class="rx"><b>지도</b> ${D.causes[k].tip}</div></div></div>`;
   }).join('');
   return `<div class="card">
-    <div><h2>같은 문항, 다른 원인</h2><p class="muted small">${o.q.unit ? o.q.id + '번(' + unitLabel(o.q) + ')' : '직접 입력한 문항'}에서 ${o.n}명이 틀렸습니다. 풀이를 읽으면 원인이 ${o.kinds}가지로 나뉩니다. 빨간 물결은 학생이 처음 틀린 줄입니다.</p></div>
+    <div><h2>같은 문항, 다른 원인</h2><p class="muted small">${o.q.unit ? o.q.id + '번(' + unitLabel(o.q) + ')' : esc(o.q.topic)}에서 ${o.n}명이 틀렸습니다. 풀이를 읽으면 원인이 ${o.kinds}가지로 나뉩니다. 빨간 물결은 학생이 처음 틀린 줄입니다.</p></div>
     <div class="versus">
       <div class="old"><span class="small muted">정답·오답만 보는 오답노트</span>
         <span class="big">${o.q.unit ? o.q.id + '번 ' : ''}${esc(o.q.topic)} · ${o.n}명 오답</span>
@@ -586,7 +667,7 @@ function renderBrief() {
   }).join('');
   const causeBar = CK.filter(k => by[k] > 0).map(k => `<div class="${k}" style="flex:${by[k]}" title="${D.causes[k].name} ${by[k]}건">${by[k]}</div>`).join('');
   const legend = CK.map(k => `<span>${causeTag(k)} ${D.causes[k].name} <b class="num">${by[k]}건 (${total ? pct(by[k] / total) : 0}%)</b></span>`).join('');
-  const qRows = qs.map(o => `<div class="qrow"><div class="lbl"><b>${o.q.unit ? o.q.id + '번' : '직접'}</b> <span class="muted">${esc(o.q.topic)}</span></div>
+  const qRows = qs.map(o => `<div class="qrow"><div class="lbl"><b>${qNo(o.q)}</b> <span class="muted">${esc(o.q.topic)}</span></div>
     <div class="track" role="img" aria-label="${esc(o.q.topic)} 오답률 ${pct(o.rate)}%">${CK.filter(k => o.by[k] > 0).map(k => `<div class="${k}" style="width:${o.by[k] / o.takers * 100}%" title="${D.causes[k].short} ${o.by[k]}명"></div>`).join('')}</div>
     <div class="num">${o.n}/${o.takers} · ${pct(o.rate)}%</div></div>`).join('');
   const axis = `<div class="axis"><div></div><div class="ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div><div></div></div>`;
@@ -666,7 +747,7 @@ function renderChk() {
   const items = list.map(r => {
     const q = qOf(r.q) || { id: r.q, topic: '', ans: '-' };
     return `<div class="rec" id="rec-${r.id}">
-      <div class="side" style="display:flex;flex-direction:column;gap:8px;min-width:0"><div><b>학생 ${esc(r.s)} · ${q.unit ? q.id + '번' : '직접 입력'}</b> <span class="muted small">${esc(q.topic)}</span> ${srcTag(r)}</div>
+      <div class="side" style="display:flex;flex-direction:column;gap:8px;min-width:0"><div><b>학생 ${esc(r.s)} · ${qNo(q)}</b> <span class="muted small">${esc(q.topic)}</span> ${srcTag(r)}</div>
         ${workBox(r, { sm: true })}
         <div class="ans"><span>쓴 답 <span class="w">${esc(r.given)}</span></span><span>정답 ${esc(q.ans)}</span></div></div>
       <div class="small" style="display:flex;flex-direction:column;gap:6px"><div>AI 분류 ${causeTag(r.cause)} ${statusTxt(r)}</div><div>${esc(r.why)}</div></div>
@@ -680,7 +761,7 @@ function renderChk() {
   $('p-chk').innerHTML = `
     <div class="card">
       <div><h2>채점표</h2><p class="muted small">○는 정답, 글자는 오답 원인의 첫 글자입니다 (개 개념, 계 계산, 오 오독, 전 전략). 점(·)은 아직 채점하지 않은 문항입니다. 칸을 누르면 아래 목록에서 해당 진단서를 찾습니다.</p></div>
-      <div class="tablewrap"><table class="grid"><thead><tr><th></th>${qs.map(q => `<th title="${esc(unitLabel(q))}">${q.unit ? q.id : '직'}</th>`).join('')}</tr></thead><tbody>${grid}</tbody></table></div>
+      <div class="tablewrap"><table class="grid"><thead><tr><th></th>${qs.map(q => `<th title="${esc(unitLabel(q))}">${esc(qHead(q))}</th>`).join('')}</tr></thead><tbody>${grid}</tbody></table></div>
     </div>
     <div class="card">
       <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
@@ -771,11 +852,11 @@ document.addEventListener('keydown', e => {
   if (e.target.id === 'code' && e.key === 'Enter') { e.preventDefault(); submitCode(e.target.value); }
 });
 document.addEventListener('change', e => {
-  if (e.target.id === 'qsel') { ui.dx.qid = e.target.value === 'new' ? 'new' : +e.target.value; renderDxForm(); return; }
+  if (e.target.id === 'qsel') { ui.dx.qid = ['new', 'sheet'].includes(e.target.value) ? e.target.value : +e.target.value; renderDxForm(); return; }
   if (e.target.id === 'ssel') { ui.dx.s = e.target.value; renderDxForm(); return; }
   if (e.target.id === 'file') { takeFiles(e.target.files); e.target.value = ''; return; }
   if (e.target.id === 'redact') { ui.redact = e.target.checked; lsSet(STORE + '.redact', ui.redact ? '1' : '0'); renderDxForm(); return; }
-  if (e.target.dataset.itemS) { const it = ui.queue.find(x => x.id === e.target.dataset.itemS); if (it) { it.s = e.target.value; if (it.cur) it.cur.rec.s = it.s; renderDx(); } return; }
+  if (e.target.dataset.itemS) { const it = ui.queue.find(x => x.id === e.target.dataset.itemS); if (it) { group(it).forEach(x => { if (!x.saved) { x.s = e.target.value; if (x.cur) x.cur.rec.s = x.s; } }); renderDx(); } return; }
   if (e.target.dataset.act === 'cause') { const it = selItem(); if (it && it.cur) { it.cur.rec.cause = e.target.value; renderDxOut(); renderDxForm(); } return; }
   const s = e.target.closest('select[data-sel]');
   if (s) { const r = recById(s.dataset.sel); if (r) { if (s.value !== r.cause) { r.cause = s.value; r.byTeacher = true; } r.confirmed = true; save(); render(); } }
@@ -783,6 +864,9 @@ document.addEventListener('change', e => {
 document.addEventListener('input', e => {
   if (e.target.id === 'ctext') ui.dx.custom.text = e.target.value;
   if (e.target.id === 'cans') ui.dx.custom.ans = e.target.value;
+  if (e.target.id === 'sexam') ui.dx.sheet.exam = e.target.value;
+  if (e.target.id === 'snos') ui.dx.sheet.nos = e.target.value;
+  if (e.target.id === 'sans') ui.dx.sheet.ans = e.target.value;
   if (e.target.id === 'sname') ui.dx.newName = e.target.value;
 });
 // 끌어다 놓기 · 붙여 넣기

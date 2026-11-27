@@ -111,14 +111,21 @@ function analyze(img) {
 }
 
 // 가림을 픽셀에 칠한 JPEG
-function render(img, rot, masks, max, q) {
-  const c = canvasOf(img, rot, max);
+function render(img, rot, masks, max, q, crop) {
+  let c = canvasOf(img, rot, crop ? max / Math.max(0.2, Math.max(crop.w, crop.h)) : max);
   const g = c.getContext('2d');
   g.fillStyle = '#2b2f36';
   for (const m of masks || []) g.fillRect(Math.floor(m.x * c.width), Math.floor(m.y * c.height), Math.ceil(m.w * c.width), Math.ceil(m.h * c.height));
   if (masks && masks.length && c.width > 200) {
     g.fillStyle = '#9aa3ad'; g.font = `${Math.round(c.width / 40)}px sans-serif`; g.textBaseline = 'middle';
     for (const m of masks) if (m.h * c.height > c.width / 30) g.fillText('개인정보 가림', m.x * c.width + c.width / 60, (m.y + m.h / 2) * c.height);
+  }
+  if (crop) {
+    // 문항 영역만 잘라 내기 (가림을 칠한 뒤에 자르므로 가린 부분은 그대로 가려진다)
+    const x = Math.max(0, Math.floor(crop.x * c.width)), y = Math.max(0, Math.floor(crop.y * c.height));
+    const w = Math.min(c.width - x, Math.ceil(crop.w * c.width)), h = Math.min(c.height - y, Math.ceil(crop.h * c.height));
+    const d = document.createElement('canvas'); d.width = w; d.height = h;
+    d.getContext('2d').drawImage(c, x, y, w, h, 0, 0, w, h); c = d;
   }
   return c.toDataURL('image/jpeg', q);
 }

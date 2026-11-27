@@ -640,14 +640,13 @@ function renderDxForm() {
     <div class="field"><label for="ssel"><span class="stepno">1</span>학생</label>
       <select id="ssel">${sOpts}</select>
       ${ui.dx.s === '__new' ? `<input type="text" id="sname" placeholder="학생 이름 (예: 학생 I, 지민)" value="${esc(ui.dx.newName)}">` : ''}
-      <span class="privacy">이 학생의 시험지를 올립니다. 다른 학생의 시험지는 학생을 바꾼 뒤 올려 주세요.</span>
     </div>
     <div class="field"><span class="lab"><span class="stepno">2</span>시험지 사진</span>
       <label class="drop" id="drop">
         <input type="file" id="file" accept="image/*" multiple aria-label="시험지 사진 선택 (여러 장 가능)">
         <span class="big">📷</span><b>${qn ? '사진 더 추가하기' : '사진 찍기 또는 파일 선택'}</b><span class="small">여러 장을 한꺼번에 고르거나 끌어다 놓아도 됩니다</span>
       </label>
-      <label class="toggle"><input type="checkbox" id="redact"${ui.redact ? ' checked' : ''}> 학원 이름·로고·학생 이름 자동으로 가리기</label>
+      <label class="toggle"><input type="checkbox" id="redact"${ui.redact ? ' checked' : ''}> 개인정보 가리기</label>
     </div>
     <details class="opt"${opened ? ' open' : ''}><summary>선택 사항: 시험 이름 · 정답표 · 특정 문항만</summary>
       <input type="text" id="sexam" placeholder="시험 이름 (비우면 오늘 날짜)" value="${esc(sh.exam)}">
@@ -974,7 +973,7 @@ function renderNew() {
     <div class="field"><label for="gCount"><span class="stepno">2</span>학생 수</label>
       <div class="countrow"><select id="gCount">${counts}</select>
         ${custom ? `<input type="number" id="gCountIn" min="1" max="60" value="${g.count}" inputmode="numeric" aria-label="학생 수 직접 입력"><span class="muted small">명 (최대 60명)</span>` : ''}</div></div>
-    <div class="field"><span class="lab"><span class="stepno">3</span>학생 이름 <button class="linkbtn" id="gAuto" type="button">자동 이름으로 되돌리기</button></span>
+    <div class="field"><span class="lab"><span class="stepno">3</span>학생 이름 <button class="linkbtn" id="gAuto" type="button">기본 이름으로 되돌리기</button></span>
       <div class="stugrid" id="gNames">${namesHtml(names)}</div>
       <span class="privacy">실명 대신 이니셜이나 번호를 쓰기를 권합니다. 기록은 이 브라우저에만 저장됩니다.</span></div>
     <div class="actions"><button class="btn ok" id="gCreate" type="button">반 만들기</button>

@@ -241,3 +241,4 @@ details.opt summary{cursor:pointer;color:var(--muted)} details.opt[open]{display
 .srow .x{border:0;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer}
 .btn.danger{color:var(--wrong);border-color:var(--wrong)}
 .field .lab{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.countrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap} .countrow input{width:90px}

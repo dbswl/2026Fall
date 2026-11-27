@@ -56,7 +56,7 @@ function useGroup(g) {
 
 const ui = {
   tab: 'dx', stu: 'A', showAll: false, onboard: false,
-  newG: { name: '', count: 8, names: [] },     // 새 반 만들기 입력
+  newG: { name: '', count: 8, names: [], custom: false },     // 새 반 만들기 입력
   ai: null, needCode: false, codeOk: false, code: lsGet(STORE + '.code') || '',
   dx: { qid: 'sheet', s: 'A', custom: { text: '', ans: '' }, sheet: { exam: '', nos: '', ans: '', same: true }, newName: '' },
   queue: [], sel: null, pickLine: false, running: false,
@@ -854,22 +854,27 @@ function newNames() {
 }
 function renderNew() {
   const g = ui.newG; const names = newNames();
-  const counts = Array.from({ length: 40 }, (_, i) => i + 1).map(n => `<option value="${n}"${n === g.count ? ' selected' : ''}>${n}명</option>`).join('');
+  // 1~10명은 바로 고르고, 그보다 많으면 직접 적는다
+  const custom = g.custom || g.count > 10;
+  const counts = Array.from({ length: 10 }, (_, i) => i + 1).map(n => `<option value="${n}"${!custom && n === g.count ? ' selected' : ''}>${n}명</option>`).join('') +
+    `<option value="custom"${custom ? ' selected' : ''}>직접 입력</option>`;
   $('p-new').innerHTML = `<div class="card onboard">
     <div><h2>${DB.groups.length ? '새 반 만들기' : '반을 만들고 시작하세요'}</h2>
       <p class="muted small">반 이름과 학생 수를 정하면 학생 이름이 A부터 자동으로 붙습니다. 이름은 아래에서 바로 고칠 수 있고, 나중에 "반 관리"에서도 바꿀 수 있습니다.</p></div>
     <div class="field"><label for="gName"><span class="stepno">1</span>반 이름</label>
       <input type="text" id="gName" placeholder="예: 중1 A반 (월·수 7시)" value="${esc(g.name)}" maxlength="30"></div>
     <div class="field"><label for="gCount"><span class="stepno">2</span>학생 수</label>
-      <select id="gCount">${counts}</select></div>
+      <div class="countrow"><select id="gCount">${counts}</select>
+        ${custom ? `<input type="number" id="gCountIn" min="1" max="60" value="${g.count}" inputmode="numeric" aria-label="학생 수 직접 입력"><span class="muted small">명 (최대 60명)</span>` : ''}</div></div>
     <div class="field"><span class="lab"><span class="stepno">3</span>학생 이름 <button class="linkbtn" id="gAuto" type="button">A부터 다시 붙이기</button></span>
-      <div class="stugrid">${names.map((n, i) => `<input type="text" data-gi="${i}" value="${esc(n)}" maxlength="12" aria-label="${i + 1}번째 학생 이름">`).join('')}</div>
+      <div class="stugrid" id="gNames">${namesHtml(names)}</div>
       <span class="privacy">실명 대신 이니셜이나 번호를 쓰기를 권합니다. 기록은 이 브라우저에만 저장됩니다.</span></div>
     <div class="actions"><button class="btn ok" id="gCreate" type="button">반 만들기</button>
       ${S ? '<button class="btn ghost" id="gCancel" type="button">취소</button>' : ''}</div>
     ${DB.groups.some(x => x.sample) ? '' : `<p class="small muted">먼저 둘러보고 싶다면 <button class="linkbtn" id="gSample" type="button">샘플 반 열어 보기</button> (가상의 학생 8명 기록)</p>`}
   </div>`;
 }
+const namesHtml = names => names.map((n, i) => `<input type="text" data-gi="${i}" value="${esc(n)}" maxlength="12" aria-label="${i + 1}번째 학생 이름">`).join('');
 function checkNames(list) {
   const t = list.map(x => String(x || '').trim());
   if (t.some(x => !x)) return '비어 있는 학생 이름이 있어요';
@@ -884,7 +889,7 @@ function createGroup() {
   if (DB.groups.some(x => x.name === name)) { toast('같은 이름의 반이 이미 있어요'); return; }
   const bad = checkNames(names); if (bad) { toast(bad); return; }
   const grp = emptyGroup(name, names);
-  DB.groups.push(grp); ui.newG = { name: '', count: 8, names: [] };
+  DB.groups.push(grp); ui.newG = { name: '', count: 8, names: [], custom: false };
   useGroup(grp); show('dx');
   toast(`${name} (${names.length}명)을 만들었어요. 시험지를 올려 보세요.`);
 }
@@ -1043,7 +1048,12 @@ document.addEventListener('change', e => {
     if (ui.queue.some(it => !it.saved && it.status !== 'wait') && !confirm('반영하지 않은 진단이 있습니다. 다른 반으로 옮기면 사라집니다. 옮길까요?')) { updateCounts(); return; }
     const g = DB.groups.find(x => x.id === v); if (g) useGroup(g); return;
   }
-  if (e.target.id === 'gCount') { ui.newG.count = +e.target.value; renderNew(); return; }
+  if (e.target.id === 'gCount') {
+    if (e.target.value === 'custom') { ui.newG.custom = true; ui.newG.count = Math.max(ui.newG.count, 11); renderNew(); const f = $('gCountIn'); if (f) { f.focus(); f.select(); } }
+    else { ui.newG.custom = false; ui.newG.count = +e.target.value; renderNew(); }
+    return;
+  }
+  if (e.target.id === 'gCountIn') { e.target.value = ui.newG.count; return; }
   if (e.target.id === 'qsel') { ui.dx.qid = ['new', 'sheet'].includes(e.target.value) ? e.target.value : +e.target.value; renderDxForm(); return; }
   if (e.target.id === 'ssel') { ui.dx.s = e.target.value; renderDxForm(); return; }
   if (e.target.id === 'file') { takeFiles(e.target.files); e.target.value = ''; return; }
@@ -1056,6 +1066,11 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('input', e => {
   if (e.target.id === 'gName') ui.newG.name = e.target.value;
+  if (e.target.id === 'gCountIn') {
+    // 적는 동안에는 이름 칸만 다시 그린다 (입력 칸 포커스 유지)
+    const n = Math.round(+e.target.value);
+    if (n >= 1 && n <= 60) { ui.newG.count = n; $('gNames').innerHTML = namesHtml(newNames()); }
+  }
   if (e.target.dataset && e.target.dataset.gi !== undefined) ui.newG.names[+e.target.dataset.gi] = e.target.value;
   if (e.target.id === 'geName') ui.gEdit.name = e.target.value;
   if (e.target.dataset && e.target.dataset.ge !== undefined) ui.gEdit.rows[+e.target.dataset.ge].name = e.target.value;

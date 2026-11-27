@@ -479,7 +479,7 @@ async function scanItem(it, todo) {
     .filter(q => q.no && !seen.has(q.no) && seen.add(q.no))
     .sort((a, b) => a.no - b.no)
     .map(q => {
-      const g = q.region;
+      const g = q.region || (ok(q.x) ? { x: q.x, y: q.y, w: q.w, h: q.h } : null);
       const hint = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 ? padBox(g, 0.03) : null;
       const x = { id: 'p' + (++seq), reviewed: true, name: it.name, img: it.img, rot: it.rot, masks: it.masks, photo: it.photo, thumb: it.thumb, grp: it.grp,
         s: it.s, qid: sheetQid(it.sheet.exam, q.no), q: null, hint, region: hint, saved: false, cur: null,
@@ -591,12 +591,26 @@ function confirmItem(it, quiet) {
   S.session = S.session.slice(0, 40);
   it.saved = true; ui.stu = it.s;
   if (!quiet) {
-    save(); renderDx(); updateCounts();
-    const next = ui.queue.find(x => x.status === 'done' && !x.saved);
-    toast(cur.correct ? `${it.s}의 풀이를 정답으로 기록했어요` : `${it.s}의 진단을 반영했어요`,
-      next ? [['다음 진단서 보기', () => { ui.sel = next.id; ui.pickLine = false; renderDx(); }]] : [['진찰 기록 보기', () => show('brief')], ['처방전 보기', () => show('stu')]]);
+    save(); updateCounts();
+    const next = nextPending(it);
+    if (next) { ui.sel = next.id; ui.pickLine = false; }
+    renderDx();
+    const what = `${it.s} · ${qNo(problemOf(it))}`;
+    toast(next ? `${what} 반영 · 다음 진단서로 넘어갔어요` : `${what} 반영 · 모두 반영했어요`);
+    if (next) toResult();
   }
   return true;
+}
+// 지금 진단서 다음 차례의 반영 대기 진단서 (없으면 앞쪽에서)
+function nextPending(it) {
+  const list = ui.queue.filter(x => x.status === 'done' && !x.saved);
+  const i = ui.queue.indexOf(it);
+  return list.find(x => ui.queue.indexOf(x) > i) || list[0] || null;
+}
+function toResult() {
+  const el = $('resCard'); if (!el) return;
+  const top = el.getBoundingClientRect().top;
+  if (top < 0 || top > window.innerHeight * 0.6) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function confirmConfident() {
   const list = ui.queue.filter(it => it.status === 'done' && !it.saved && it.cur && (it.cur.correct || it.cur.rec.conf >= LOW));
@@ -605,8 +619,8 @@ function confirmConfident() {
   const left = ui.queue.filter(it => it.status === 'done' && !it.saved);
   if (left.length) ui.sel = left[0].id;
   renderDx();
-  toast(`${list.length}건을 반영했어요` + (left.length ? `. 신뢰도가 낮은 ${left.length}건은 직접 확인해 주세요` : ''),
-    left.length ? [] : [['진찰 기록 보기', () => show('brief')]]);
+  toast(left.length ? `${list.length}건 반영 · 확인이 필요한 ${left.length}건이 남았어요` : `${list.length}건 모두 반영했어요`);
+  if (left.length) toResult();
 }
 
 // ---------- 새 진단 화면 ----------
@@ -691,6 +705,15 @@ function renderDxOut() {
     const all = ui.queue.filter(it => it.status !== 'wait' || true).length;
     top = `<div class="card"><div class="res-head"><div><h2>진단 중 ${fin} / ${all}</h2><p class="muted small">사진마다 풀이를 읽고, 처음 틀린 줄과 원인을 찾고 있습니다. 한 장에 보통 5~15초 걸립니다.</p></div></div>
       <div class="bar"><div style="width:${all ? fin / all * 100 : 0}%"></div></div></div>`;
+  } else if (done.length && !pend.length && done.some(x => x.saved)) {
+    const okN = done.filter(x => x.cur && x.cur.correct).length, wrong = done.length - okN;
+    const by = emptyBy(); done.forEach(x => { if (x.cur && !x.cur.correct && x.cur.rec.cause) by[x.cur.rec.cause]++; });
+    const who = [...new Set(done.map(x => x.s))];
+    top = `<div class="card done-card"><div><h2>✓ ${done.length}건 모두 반영했어요</h2>
+      <p class="muted small">${who.map(esc).join(', ')} · 정답 ${okN}문항 · 오답 ${wrong}문항${wrong ? ' (' + CK.filter(k => by[k]).map(k => D.causes[k].short + ' ' + by[k]).join(', ') + ')' : ''}</p></div>
+      <div class="actions"><button class="btn" data-go="brief">진찰 기록 보기</button>
+        <button class="btn ghost" data-go-stu="${esc(who[0])}">${who.length === 1 ? esc(who[0]) + ' ' : ''}오답 처방전 보기</button>
+        <button class="btn ghost" data-act="nextsheet">다음 시험지 올리기</button></div></div>`;
   } else if (done.length > 1 && pend.length) {
     const sure = pend.filter(it => it.cur.correct || it.cur.rec.conf >= LOW).length;
     const low = pend.length - sure;
@@ -729,21 +752,26 @@ function resultCard(it) {
   const photo = `<div class="photo" data-zoom-item="${it.id}" title="눌러서 사진 전체 보기"><img src="${it.region ? it.regionShot : it.photo}" alt="학생 풀이 사진">${it.region ? '<span class="cropnote">문항 부분 · 눌러서 전체 보기</span>' : ''}</div>`;
   const ansShown = q.ans || (it.sheet && it.sheet.aiAns ? it.sheet.aiAns + ' (AI가 푼 값)' : '-');
   const readProb = it.sheet && !it.quick ? `<div class="probbox small"><b>AI가 사진에서 읽은 ${esc(it.sheet.no)}번 문제</b><br>${q.text || '(읽지 못함)'}<div class="a">다른 문항을 읽었다면 "다시 진단"을 눌러 주세요.</div></div>` : '';
-  const nav = ui.queue.length > 1 ? `<button class="btn ghost" data-act="prev">이전</button><button class="btn ghost" data-act="next">다음</button>` : '';
+  const doneList = ui.queue.filter(x => x.status === 'done');
+  const leftN = doneList.filter(x => !x.saved).length;
+  const pager = doneList.length > 1 ? `<div class="pager"><button class="pg" data-act="prev" type="button">‹ 이전</button>
+    <span>${doneList.indexOf(it) + 1} / ${doneList.length}${leftN ? ` · 반영 대기 ${leftN}` : ' · 모두 반영'}</span>
+    <button class="pg" data-act="next" type="button">다음 ›</button></div>` : '';
+  const nav = '';
 
   if (cur.correct) {
-    return `<div class="card">${head}${notes}${readProb}
+    return `<div class="card" id="resCard">${pager}${head}${notes}${readProb}
       <div class="res-grid">${photo}<div class="side" style="display:flex;flex-direction:column;gap:10px">
         ${it.quick ? '' : workBox({ work: r.work, err: null })}
         <div class="good"><b style="color:var(--ok)">${it.quick ? '정답으로 판정했습니다 (빠른 판정).' : '정답 풀이입니다.'}</b><div class="small">쓴 답 ${esc(r.given)} · 정답 ${esc(ansShown)}</div>
         ${it.quick ? `<div class="small muted" style="margin-top:4px">${esc(r.why)} 풀이를 줄 단위로 보려면 "다시 진단"을 누르세요.</div>` : ''}</div>
       </div></div>
-      <div class="actions">${it.saved ? '<span class="done">✓ 정답으로 기록했어요</span>' : '<button class="btn ok" data-act="confirm">정답으로 기록</button>'}
+      <div class="actions">${it.saved ? '<span class="done">✓ 정답으로 기록 완료</span>' : '<button class="btn ok" data-act="confirm">정답으로 기록</button>'}
         <button class="btn ghost" data-act="again">다시 진단</button>${nav}</div></div>`;
   }
   const causeSel = `<select data-act="cause" aria-label="원인 바꾸기">${CK.map(k => `<option value="${k}"${k === r.cause ? ' selected' : ''}>${D.causes[k].name}</option>`).join('')}</select>`;
   const sim = r.sim || (q.sim ? { text: q.sim.text, ans: q.sim.ans } : null);
-  return `<div class="card">${head}${notes}
+  return `<div class="card" id="resCard">${pager}${head}${notes}
     <div class="res-grid">${photo}
       <div class="side" style="display:flex;flex-direction:column;gap:10px;min-width:0">
         ${ui.pickLine && !it.saved ? '<div class="warn" style="border-color:var(--accent);background:var(--soft)">처음 틀린 줄을 눌러 고르세요.</div>' : ''}
@@ -759,7 +787,7 @@ function resultCard(it) {
       ${sim ? `<div class="note small"><b>처방 문제</b> <span class="muted">같은 유형의 연습 문제</span><br>${sim.text}<details><summary>정답 보기</summary>${esc(sim.ans)}</details></div>` : ''}
     </div>
     <div class="actions">
-      ${it.saved ? '<span class="done">✓ 진찰 기록과 오답 처방전에 반영했어요</span>' :
+      ${it.saved ? '<span class="done">✓ 반영 완료</span>' :
         `<button class="btn ok" data-act="confirm">진단 확인하고 반영</button>
          <button class="btn ghost" data-act="pick">${ui.pickLine ? '줄 고르기 취소' : '틀린 줄 다시 고르기'}</button>
          <button class="btn ghost" data-act="again">다시 진단</button>`}${nav}
@@ -1117,6 +1145,7 @@ document.addEventListener('click', e => {
   if (act === 'again') { const it = selItem(); if (it) { it.status = 'wait'; runAll([it]); } return; }
   if (act === 'prev') { step(-1); return; }
   if (act === 'next') { step(1); return; }
+  if (act === 'nextsheet') { ui.queue = []; ui.sel = null; renderDx(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (act === 'clearq') { ui.queue = []; ui.sel = null; renderDx(); return; }
   if (act === 'code') { submitCode($('code').value); return; }
   if (act === 'print') { window.print(); return; }

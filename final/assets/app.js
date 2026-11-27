@@ -186,7 +186,7 @@ async function takeFiles(files) {
       const a = ui.redact && window.Redact ? Redact.analyze(img) : { rot: 0, masks: [] };
       const it = { id: 'p' + (++seq), name: f.name, img, rot: a.rot, masks: a.masks, auto: a.masks.length,
         qid, q: qid === 'new' ? { text: ui.dx.custom.text.trim(), ans: ui.dx.custom.ans.trim() } : null,
-        s: sheet && ui.dx.sheet.same ? baseStudent() : nextStudent(sheet ? (sheet.nos.length ? sheetQid(sheet.exam, sheet.nos[0]) : 'scan:' + sheet.exam) : qid), status: 'wait', cur: null, saved: false };
+        reviewed: false, s: sheet && ui.dx.sheet.same ? baseStudent() : nextStudent(sheet ? (sheet.nos.length ? sheetQid(sheet.exam, sheet.nos[0]) : 'scan:' + sheet.exam) : qid), status: 'wait', cur: null, saved: false };
       paint(it);
       if (sheet && !sheet.nos.length) {
         it.grp = it.id; it.scan = true; it.qid = 'scan:' + sheet.exam; it.q = null;
@@ -212,6 +212,7 @@ async function takeFiles(files) {
     } catch (e) { toast('사진을 읽지 못했습니다: ' + f.name); }
   }
   renderDx();
+  openReview();
 }
 function sheetSpec() {
   const d = new Date();
@@ -303,18 +304,57 @@ function openEditor(it) {
       if (k === 'cancel') { ui.edit = null; dlg.close(); }
       if (k === 'ok') {
         const it2 = ed.it; it2.rot = ed.rot; it2.masks = ed.masks; paint(it2);
-        let had = false;
-        group(it2).forEach(x => {
-          if (x !== it2) { x.rot = it2.rot; x.masks = it2.masks; x.photo = it2.photo; x.thumb = it2.thumb; }
-          if (!x.saved && (x.status === 'done' || x.status === 'err')) { x.status = 'wait'; x.cur = null; had = true; }
-        });
-        ui.edit = null; dlg.close(); ui.sel = it2.id; renderDx();
-        toast(had ? '가림을 바꿨어요. 이 사진을 다시 진단해 주세요.' : `가림 ${it2.masks.length}곳을 적용했어요`);
+        group(it2).forEach(x => { if (x !== it2) { x.rot = it2.rot; x.masks = it2.masks; x.photo = it2.photo; x.thumb = it2.thumb; } });
+        ui.edit = null; dlg.close(); renderDx(); drawReview();
       }
     });
   }
   ui.edit = { it, rot: it.rot, masks: it.masks.map(m => ({ ...m })) };
   dlg.showModal(); prepEditor();
+}
+// ---------- 가림 확인 (진단 전에 한 번) ----------
+// 올린 사진을 가린 모습으로 보여 주고, 선생님이 "이대로 진단 시작"을 눌러야 AI로 보낸다
+function reviewPhotos() {
+  const seen = new Set();
+  return ui.queue.filter(it => !it.reviewed && !seen.has(it.grp || it.id) && seen.add(it.grp || it.id));
+}
+function openReview() {
+  if (!reviewPhotos().length) return;
+  let dlg = $('reviewDlg');
+  if (!dlg) {
+    dlg = document.createElement('dialog'); dlg.id = 'reviewDlg'; dlg.className = 'redact review';
+    document.body.appendChild(dlg);
+    dlg.addEventListener('click', e => {
+      const b = e.target.closest('[data-rv],[data-rv-edit],[data-rv-del]'); if (!b) return;
+      if (b.dataset.rvEdit) { openEditor(ui.queue.find(x => x.id === b.dataset.rvEdit)); return; }
+      if (b.dataset.rvDel) {
+        const it = ui.queue.find(x => x.id === b.dataset.rvDel); const g = it.grp || it.id;
+        ui.queue = ui.queue.filter(x => (x.grp || x.id) !== g);
+        if (!ui.queue.some(x => x.id === ui.sel)) ui.sel = ui.queue.length ? ui.queue[0].id : null;
+        renderDx(); drawReview(); return;
+      }
+      if (b.dataset.rv === 'later') { dlg.close(); return; }
+      if (b.dataset.rv === 'start') {
+        ui.queue.forEach(x => { x.reviewed = true; });
+        dlg.close(); dlg.innerHTML = ''; runAll(ui.queue);
+      }
+    });
+  }
+  drawReview();
+  if (!dlg.open) dlg.showModal();
+}
+function drawReview() {
+  const dlg = $('reviewDlg'); if (!dlg) return;
+  const ph = reviewPhotos();
+  if (!ph.length) { if (dlg.open) dlg.close(); return; }
+  dlg.innerHTML = `<div class="rhead"><h2>가림 확인</h2>
+      <p class="small muted">AI로 보내기 전에 가려진 모습을 확인해 주세요. 학원 이름·로고·학생 이름이 보이면 "직접 편집"으로 더 가리면 됩니다. 확인을 누른 뒤에 진단을 시작합니다.</p></div>
+    <div class="rgrid">${ph.map(it => `<figure>
+      <div class="rimg"><img src="${it.photo}" alt="가린 시험지 사진"></div>
+      <figcaption><span><b>학생 ${esc(it.s)}</b> · ${it.masks.length ? `<span class="hid">가림 ${it.masks.length}곳</span>` : '<span class="low">가린 곳 없음</span>'}</span>
+        <span class="rbtns"><button class="btn ghost" data-rv-edit="${it.id}" type="button">직접 편집</button><button class="linkbtn" data-rv-del="${it.id}" type="button">빼기</button></span></figcaption></figure>`).join('')}</div>
+    <div class="actions"><button class="btn ghost" data-rv="later" type="button">나중에</button><span style="flex:1"></span>
+      <button class="btn ok" data-rv="start" type="button">이대로 진단 시작 (${ph.length}장)</button></div>`;
 }
 function prepEditor() {
   const ed = ui.edit; const cv = $('rc');
@@ -417,7 +457,7 @@ async function scanItem(it, todo) {
     .map(q => {
       const g = q.region;
       const hint = g && ok(g.x) && ok(g.y) && ok(g.w) && ok(g.h) && g.w > 0.05 && g.h > 0.03 ? padBox(g, 0.03) : null;
-      const x = { id: 'p' + (++seq), name: it.name, img: it.img, rot: it.rot, masks: it.masks, photo: it.photo, thumb: it.thumb, grp: it.grp,
+      const x = { id: 'p' + (++seq), reviewed: true, name: it.name, img: it.img, rot: it.rot, masks: it.masks, photo: it.photo, thumb: it.thumb, grp: it.grp,
         s: it.s, qid: sheetQid(it.sheet.exam, q.no), q: null, hint, region: hint, saved: false, cur: null,
         sheet: { exam: it.sheet.exam, no: q.no, ans: (it.sheet.key || {})[q.no] || '', aiAns: q.correct_answer || '', text: '',
           topic: q.topic ? String(q.topic).slice(0, 40) : '', unitName: q.unit ? String(q.unit).slice(0, 30) : '' } };
@@ -436,7 +476,7 @@ async function scanItem(it, todo) {
 
 async function runAll(items) {
   if (ui.running) return;
-  const todo = items.filter(it => it.status === 'wait' || it.status === 'err');
+  const todo = items.filter(it => it.reviewed && (it.status === 'wait' || it.status === 'err'));
   if (!todo.length) return;
   for (const it of todo) {
     if (!it.sheet && (it.qid === 'new' || !qOf(it.qid) && !(it.q && it.q.text))) {
@@ -586,7 +626,7 @@ function renderDxForm() {
       <input type="text" id="snos" placeholder="이 번호만 진단 (예: 9, 12) · 비우면 모든 문항" value="${esc(sh.nos)}" inputmode="numeric">
     </details>
     ${qn ? queueHtml() : ''}
-    <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : waiting > 1 ? `${waiting}건 모두 진단하기` : '진단하기'}</button>
+    <button class="btn wide" id="go" ${waiting && !ui.running ? '' : 'disabled'}>${ui.running ? '진단 중…' : ui.queue.some(it => !it.reviewed) ? '가림 확인하고 진단하기' : waiting > 1 ? `${waiting}건 모두 진단하기` : '진단하기'}</button>
     <p class="privacy">${ui.redact ? '시험지 머리글(학원 로고·시험 이름·학생 이름)과 바닥글은 이 기기에서 먼저 가린 뒤 전송합니다. ' : ''}사진은 진단에만 쓰이고 서버에 저장되지 않습니다.</p>`;
 }
 function qHeadline() {
@@ -609,7 +649,7 @@ function queueHtml() {
       <img src="${it.thumb}" alt="">
       <div class="qmeta"><select data-item-s="${it.id}" aria-label="학생"${it.status === 'run' || it.saved ? ' disabled' : ''}>${stOpts(it.s)}</select>
         <span class="small muted">${q ? qNo(q) : '직접 입력'}${it.masks.length ? ` · <span class="hid">가림 ${it.masks.length}곳</span>` : ''}</span>
-        ${it.saved || it.status === 'run' ? '' : `<button class="linkbtn" data-edit-item="${it.id}" type="button">가림 편집</button>`}</div>
+        ${it.reviewed ? '' : '<span class="small low">가림 확인 전</span>'}</div>
       <div class="qstate">${st}</div>
       <button class="x" data-del-item="${it.id}" aria-label="이 사진 빼기" ${it.status === 'run' ? 'disabled' : ''}>×</button></div>`;
   }).join('');
@@ -641,8 +681,8 @@ function renderDxOut() {
   else if (it && it.status === 'err') card = `<div class="card"><div class="res-head"><div><h2>학생 ${esc(it.s)} · ${esc(problemOf(it).topic || '')}</h2>
       <p class="muted small">${esc(it.errMsg || '진단하지 못했습니다.')}</p></div></div>
       <div class="res-grid"><div class="photo" data-zoom-item="${it.id}"><img src="${it.photo}" alt="학생 풀이 사진"></div>
-      <div class="small">${/HTTP|연결|초 넘게|초 후/.test(it.errMsg || '') ? '서버나 네트워크 문제입니다. 잠시 후 "다시 진단"을 눌러 주세요. 같은 오류가 반복되면 이 화면을 캡처해 알려 주세요.' : it.scan ? '사진이 너무 흐리거나 시험지가 잘려 있지 않은지 확인해 주세요.' : it.sheet ? '번호가 사진에 잘 보이는지, 문항 번호를 바르게 적었는지 확인해 주세요. 사진을 옆으로 찍었다면 "가림 편집"에서 돌릴 수 있습니다.' : ''}</div></div>
-      <div class="actions"><button class="btn ghost" data-act="again">다시 진단</button><button class="btn ghost" data-edit-item="${it.id}">가림 편집</button></div></div>`;
+      <div class="small">${/HTTP|연결|초 넘게|초 후/.test(it.errMsg || '') ? '서버나 네트워크 문제입니다. 잠시 후 "다시 진단"을 눌러 주세요. 같은 오류가 반복되면 이 화면을 캡처해 알려 주세요.' : it.scan ? '사진이 너무 흐리거나 시험지가 잘려 있지 않은지 확인해 주세요.' : it.sheet ? '번호가 사진에 잘 보이는지, 문항 번호를 바르게 적었는지 확인해 주세요. 사진이 옆으로 누워 있다면 빼고 다시 올려 주세요.' : ''}</div></div>
+      <div class="actions"><button class="btn ghost" data-act="again">다시 진단</button></div></div>`;
   else if (it && it.status === 'run') card = `<div class="card"><div class="loading"><div class="st now"><i></i>이 사진을 진단하는 중</div></div></div>`;
   else if (!ui.queue.length || (it && it.status === 'wait' && !ui.running)) {
     card = `<div class="card empty">
@@ -698,8 +738,7 @@ function resultCard(it) {
       ${it.saved ? '<span class="done">✓ 진찰 기록과 오답 처방전에 반영했어요</span>' :
         `<button class="btn ok" data-act="confirm">진단 확인하고 반영</button>
          <button class="btn ghost" data-act="pick">${ui.pickLine ? '줄 고르기 취소' : '틀린 줄 다시 고르기'}</button>
-         <button class="btn ghost" data-act="again">다시 진단</button>
-         <button class="btn ghost" data-edit-item="${it.id}">가림 편집</button>`}${nav}
+         <button class="btn ghost" data-act="again">다시 진단</button>`}${nav}
     </div></div>`;
 }
 function renderSession() {
@@ -1025,7 +1064,7 @@ document.addEventListener('click', e => {
   const row = e.target.closest('[data-sel-item]');
   if (row && !e.target.closest('select')) { ui.sel = row.dataset.selItem; ui.pickLine = false; renderDx(); return; }
   const t = e.target.closest('button'); if (!t) return;
-  if (t.id === 'go') { runAll(ui.queue); return; }
+  if (t.id === 'go') { if (ui.queue.some(it => !it.reviewed)) openReview(); else runAll(ui.queue); return; }
   if (t.id === 'resetBtn') { if (confirm('이 기기에 저장된 모든 반과 기록을 지울까요? 되돌릴 수 없습니다.')) { DB = { cur: null, groups: [] }; S = null; ui.queue = []; ui.sel = null; save(); show('dx'); toast('모든 기록을 지웠어요'); } return; }
   if (t.id === 'gCreate') { createGroup(); return; }
   if (t.id === 'gCancel') { ui.onboard = false; show(ui.tab); return; }
